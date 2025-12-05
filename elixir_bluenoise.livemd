@@ -10,19 +10,21 @@ Mix.install([
 
 ## Preface
 
-This livebook shows how to generate 2-dimensional blue noise via Elixir Nx.
+This livebook shows how to generate 2-dimensional Blue Noise via Elixir Nx.
 
-This is a translation from Python to Elixir of [the original Python/Numpy version](https://static.laszlokorte.de/blue-noise/)
+This is a translation from Python Numpy to Elixir Nx of [the original Python/Numpy version](https://static.laszlokorte.de/blue-noise/)
 
 ## Introduction
 
-[Video Demo](https://www.youtube.com/watch?v=ORsTjpy5CH8) | [Jupyter Notebook with further examples](https://github.com/laszlokorte/bluenoise-notebook/blob/main/bluenoise.ipynb) This is an interactive demonstration of the [Void and Cluster](https://ieeexplore.ieee.org/document/3288/) algorithm for generating blue noise. [There are](http://momentsingraphics.de/BlueNoise.html) already [plenty of](https://observablehq.com/@bensimonds/mitchells-best-candidate-algorithm) excellent explorations on [how](https://blog.demofox.org/2019/06/25/generating-blue-noise-textures-with-void-and-cluster/) [and why](https://www.youtube.com/watch?v=tethAU66xaA) to generate [blue noise](https://en.wikipedia.org/wiki/Colors_of_noise), [and noises of other color](https://blog.demofox.org/2017/10/25/transmuting-white-noise-to-blue-red-green-purple/). The _Void and Cluster_ algorithm is one of [several promiment algorithms](https://blog.demofox.org/2017/10/20/generating-blue-noise-sample-points-with-mitchells-best-candidate-algorithm/). [Some advantages](https://blog.demofox.org/2018/08/12/not-all-blue-noise-is-created-equal/) over other algorithms are that the blue noise is of very good quality and that only the first step in the algorithm is non-deterministic.
+[Video Demo](https://www.youtube.com/watch?v=ORsTjpy5CH8) | [Jupyter Notebook with further examples](https://github.com/laszlokorte/bluenoise-notebook/blob/main/bluenoise.ipynb) | [Interactive Web Page](https://static.laszlokorte.de/blue-noise/)
+
+This is an interactive demonstration of the [Void and Cluster](https://ieeexplore.ieee.org/document/3288/) algorithm for generating blue noise. [There are](http://momentsingraphics.de/BlueNoise.html) already [plenty of](https://observablehq.com/@bensimonds/mitchells-best-candidate-algorithm) excellent explorations on [how](https://blog.demofox.org/2019/06/25/generating-blue-noise-textures-with-void-and-cluster/) [and why](https://www.youtube.com/watch?v=tethAU66xaA) to generate [blue noise](https://en.wikipedia.org/wiki/Colors_of_noise), [and noises of other color](https://blog.demofox.org/2017/10/25/transmuting-white-noise-to-blue-red-green-purple/). The _Void and Cluster_ algorithm is one of [several promiment algorithms](https://blog.demofox.org/2017/10/20/generating-blue-noise-sample-points-with-mitchells-best-candidate-algorithm/). [Some advantages](https://blog.demofox.org/2018/08/12/not-all-blue-noise-is-created-equal/) over other algorithms are that the blue noise is of very good quality and that only the first step in the algorithm is non-deterministic.
 
 ### This livebook
 
 The goal of this livebook is to provide additional insight by visualizing the core idea of this algorithm.
 
-This insight might be used to better unstand the algorithm itself, for example to recognize potential performance improvements. But it might also be used as source of inspiration on how to design a custom algorithm. The algorithm below is implemented in Nx using an array oriented style. In this regard it can also be used as a case-study on how a sophisticated algorithm (that may [take multiple hundred lines in C++](https://github.com/Atrix256/VoidAndCluster/blob/master/generatebn_void_cluster.cpp)) can be written very succinctly when relying on higher level concepts, such as convolution and rank-polymorphism.
+This insight might be used to better understand the algorithm itself, for example to recognize potential performance improvements. But it might also be used as source of inspiration on how to design a custom algorithm. The algorithm below is implemented in Nx using an array oriented style. In this regard it can also be used as a case-study on how a sophisticated algorithm (that may [take multiple hundred lines in C++](https://github.com/Atrix256/VoidAndCluster/blob/master/generatebn_void_cluster.cpp)) can be written very succinctly when relying on higher level concepts, such as convolution and rank-polymorphism.
 
 ### Blue Noise
 
@@ -81,15 +83,69 @@ Unfortunately some very basic signal processing tools are not included in the Nx
 
 ```elixir
 # helper to output small images upscaled via CSS
-defmodule Output do 
- def image(tensor) do 
-{:ok, image} = tensor |> Nx.as_type(:u8) |> Image.from_nx!()  |> Vix.Vips.Image.write_to_buffer(".png")
-   base64 = Base.encode64(image)
- Kino.HTML.new("""
-<img style="image-rendering: crisp-edges; width: 20em; max-width: 50%;"  src="data:image/png;base64,#{base64}" style="width: 300px;">
-""")
- end
+defmodule Output do
+  def image(tensor, args \\ []) do
+    min = Nx.reduce_min(tensor)
+    max = Nx.reduce_max(tensor)
+    range = Nx.subtract(max, min)
+    image =
+      tensor |> Nx.subtract(min) |> Nx.divide(range)  |> Nx.multiply(255) |> Nx.as_type(:u8) |> Image.from_nx!()
+
+    {:ok, binary} =
+      image |> Vix.Vips.Image.write_to_buffer(".png")
+
+    base64 = Base.encode64(binary)
+
+    Kino.HTML.new("""
+    <style>
+    .plot-figure {
+    display: flex;
+    justify-content: start;
+    margin: 0;
+    padding: 0;
+    gap: 1em;
+    }
+    .plot {
+    image-rendering:pixelated;
+    resize: both;
+    width: 10em;
+    height: 10em;
+    max-width: 100%;
+     flex: basis
+    }
+    dl {
+    font-family: monospace;
+      display: grid;
+      grid-template-columns: auto auto;
+      justify-content: start;
+      gap: 1ex 1em;
+    }
+    dt, dd {
+    margin: 0;
+    }
+    </style>
+    <figure class="plot-figure">
+    <img class="plot" src="data:image/png;base64,#{base64}" alt="" />
+    
+    <figcaption>
+    <strong>Image: #{Keyword.get(args, :titel)}</strong>
+    <dl>
+    <dt>Size (w &times; h)</dt>
+    <dd>#{Image.width(image)} &times; #{Image.height(image)}</dd>
+    <dt>Type</dt>
+    <dd>#{inspect(Nx.type(tensor))}</dd>
+    <dt>Min</dt>
+    <dd>#{Nx.reduce_min(tensor) |> Nx.to_number()}</dd>
+    <dt>Max</dt>
+    <dd>#{Nx.reduce_max(tensor) |> Nx.to_number()}</dd>
+    </dl>
+    </figcaption>
+    </figure>
+    """)
+  end
 end
+
+:ok
 ```
 
 ```elixir
@@ -111,8 +167,7 @@ end
 Gauss.kernel(32, 3) 
 |> Nx.reshape({33,33, 1})
 |> then(&Nx.divide(&1, Nx.reduce_max(&1)))
-|> Nx.multiply(255)
-|> Output.image()
+|> Output.image(titel: "Gaussian Kernel")
 ```
 
 ```elixir
@@ -139,8 +194,7 @@ Gauss.kernel(8, 2)
 |> NxHelpers.cyclic_pad(5)
 |> Nx.new_axis(-1)
 |> then(&Nx.divide(&1, Nx.reduce_max(&1)))
-|> Nx.multiply(255)
-|> Output.image()
+|> Output.image(titel: "Gaussian Kernel with Cyclic Padding added")
 ```
 
 ## Initial Setup
@@ -177,8 +231,7 @@ gauss_kernel = Gauss.kernel(gauss_size, 1.8) # Prececulate gaussian kernel of di
 # caused by some pixel having the same value as their neighbours by pure chance.
 initial_white_noise 
 |> Nx.reshape({size,size, 1})
-|> Nx.multiply(255)
-|> Output.image()
+|> Output.image(titel: "Random White Noise")
 
 # Our goal will be to get rid of this randomly occuring clustering
 # while preserving the overall randomness of pixel values
@@ -204,8 +257,7 @@ placed_pixels
 |> Nx.reshape({size, size}) 
 |> Nx.flatten() 
 |> Nx.reshape({size,size, 1})
-|> Nx.multiply(255)
-|> Output.image()
+|> Output.image(titel: "Thresholded White noise")
 ```
 
 ```elixir
@@ -222,8 +274,7 @@ placed_pixels
 |> Nx.flatten() 
 |> Nx.reshape({size,size, 1})
 |> then(&(Nx.divide(&1, Nx.reduce_max(&1))))
-|> Nx.multiply(255)
-|> Output.image()
+|> Output.image(titel: "Estimated pixel density")
 ```
 
 ```elixir
@@ -294,8 +345,7 @@ Enum.count(swaps) # 36 swaps on my machine when I last tried
 not_ranked
 |> Nx.reshape({size,size, 1})
 |> Nx.divide(Nx.reduce_max(not_ranked))
-|> Nx.multiply(255)
-|> Output.image()
+|> Output.image(titel: "Repositioned white pixels")
 ```
 
 ```elixir
@@ -304,8 +354,7 @@ not_ranked
 debug_blurred
 |> Nx.reshape({size,size, 1})
 |> Nx.divide(Nx.reduce_max(debug_blurred))
-|> Nx.multiply(255)
-|> Output.image()
+|> Output.image(titel: "Estimated pixel density after repositioning pixels")
 ```
 
 ```elixir
@@ -357,7 +406,7 @@ nil
 # Look how we now have a well spaced out distributon of unique increasing values 
 new_ranks
 |> Nx.reshape({size,size, 1})
-|> Output.image()
+|> Output.image(titel: "Previously white pixels labeled with increasing value")
 
 # But there are still many black pixels left.
 # Assigning them a rank as well will be the next step
@@ -409,8 +458,7 @@ final_ranks
 |> Nx.reshape({size,size, 1})
 # for display purposes we need to scale the pixels into a range 0-255
 |> Nx.divide(Nx.reduce_max(final_ranks))
-|> Nx.multiply(255)
-|> Output.image()
+|> Output.image(titel: "Final labeling (Blue Noise)")
 ```
 
 ```elixir
@@ -418,8 +466,7 @@ final_ranks
 # In the intial distribution you can see light and dark clusters
 initial_white_noise
 |> Nx.reshape({size,size, 1})
-|> Nx.multiply(255)
-|> Output.image()
+|> Output.image(titel: "Original white noise with visible clusters")
 ```
 
 <!-- livebook:{"reevaluate_automatically":true} -->
@@ -434,9 +481,8 @@ final_ranks
 |> Nx.divide(Nx.reduce_max(final_ranks))
 |> Nx.multiply(255)
 |> Nx.less(threshold)
-|> Nx.multiply(255)
 |> Nx.reshape({size,size, 1})
-|> Output.image()
+|> Output.image(titel: "Thresholded Blue noise yields uniformly spaced white pixels")
 ```
 
 ```elixir
@@ -447,7 +493,6 @@ threshold = 16
 initial_white_noise
 |> Nx.multiply(255)
 |> Nx.less(16)
-|> Nx.multiply(255)
 |> Nx.reshape({size,size, 1})
-|> Output.image()
+|> Output.image(titel: "Thresholded White Noise yields some dense and sparse spots")
 ```
