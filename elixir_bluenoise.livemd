@@ -3,7 +3,8 @@
 ```elixir
 Mix.install([
   {:nx, "~> 0.10.0"},
-  {:kino, "~> 0.18.0"}
+  {:kino, "~> 0.18.0"},
+  {:image, "~> 0.62.1"}
 ])
 ```
 
@@ -74,6 +75,74 @@ Explore the code below…
     *   …repeat until no more pixels left.
 </details>
 
+## Helper functions
+
+Unfortunately some very basic signal processing tools are not included in the Nx package and must be defined manually.
+
+```elixir
+# helper to output small images upscaled via CSS
+defmodule Output do 
+ def image(tensor) do 
+{:ok, image} = tensor |> Nx.as_type(:u8) |> Image.from_nx!()  |> Vix.Vips.Image.write_to_buffer(".png")
+   base64 = Base.encode64(image)
+ Kino.HTML.new("""
+<img style="image-rendering: crisp-edges; width: 20em; max-width: 50%;"  src="data:image/png;base64,#{base64}" style="width: 300px;">
+""")
+ end
+end
+```
+
+```elixir
+# Helper function to generate a Gaussian kernel
+defmodule Gauss do 
+  def kernel(size, sigma) do
+    radius = div(size, 2)
+    Nx.tensor(
+      for y <- -radius..radius do
+        for x <- -radius..radius do
+          :math.exp(-(x*x + y*y)/(2*sigma*sigma))
+        end
+      end
+    )
+    |> then(&(Nx.divide(&1, Nx.sum(&1))))
+  end
+end
+
+Gauss.kernel(32, 3) 
+|> Nx.reshape({33,33, 1})
+|> then(&Nx.divide(&1, Nx.reduce_max(&1)))
+|> Nx.multiply(255)
+|> Output.image()
+```
+
+```elixir
+# Helper function to apply cyclic padding to an image tensor
+defmodule NxHelpers do  
+  def cyclic_pad(t, pad_size) do
+    h = elem(t.shape, 0)
+    w = elem(t.shape, 1)
+
+    # pad vertical
+    top    = Nx.slice(t, [h - pad_size, 0], [pad_size, w])
+    bottom = Nx.slice(t, [0, 0], [pad_size, w])
+    t_vert = Nx.concatenate([top, t, bottom], axis: 0)
+
+    # pad horizontal
+    left  = Nx.slice(t_vert, [0, w - pad_size], [elem(t_vert.shape, 0), pad_size])
+    right = Nx.slice(t_vert, [0, 0], [elem(t_vert.shape, 0), pad_size])
+    
+    Nx.concatenate([left, t_vert, right], axis: 1)
+  end
+end
+
+Gauss.kernel(8, 2) 
+|> NxHelpers.cyclic_pad(5)
+|> Nx.new_axis(-1)
+|> then(&Nx.divide(&1, Nx.reduce_max(&1)))
+|> Nx.multiply(255)
+|> Output.image()
+```
+
 ## Initial Setup
 
 First we define some intial parameters
@@ -109,8 +178,7 @@ gauss_kernel = Gauss.kernel(gauss_size, 1.8) # Prececulate gaussian kernel of di
 initial_white_noise 
 |> Nx.reshape({size,size, 1})
 |> Nx.multiply(255)
-|> Nx.as_type(:u8)
-|> Kino.Image.new()
+|> Output.image()
 
 # Our goal will be to get rid of this randomly occuring clustering
 # while preserving the overall randomness of pixel values
@@ -137,8 +205,7 @@ placed_pixels
 |> Nx.flatten() 
 |> Nx.reshape({size,size, 1})
 |> Nx.multiply(255)
-|> Nx.as_type(:u8)
-|> Kino.Image.new()
+|> Output.image()
 ```
 
 ```elixir
@@ -156,8 +223,7 @@ placed_pixels
 |> Nx.reshape({size,size, 1})
 |> then(&(Nx.divide(&1, Nx.reduce_max(&1))))
 |> Nx.multiply(255)
-|> Nx.as_type(:u8)
-|> Kino.Image.new()
+|> Output.image()
 ```
 
 ```elixir
@@ -229,8 +295,7 @@ not_ranked
 |> Nx.reshape({size,size, 1})
 |> Nx.divide(Nx.reduce_max(not_ranked))
 |> Nx.multiply(255)
-|> Nx.as_type(:u8)
-|> Kino.Image.new()
+|> Output.image()
 ```
 
 ```elixir
@@ -240,8 +305,7 @@ debug_blurred
 |> Nx.reshape({size,size, 1})
 |> Nx.divide(Nx.reduce_max(debug_blurred))
 |> Nx.multiply(255)
-|> Nx.as_type(:u8)
-|> Kino.Image.new()
+|> Output.image()
 ```
 
 ```elixir
@@ -293,8 +357,7 @@ nil
 # Look how we now have a well spaced out distributon of unique increasing values 
 new_ranks
 |> Nx.reshape({size,size, 1})
-|> Nx.as_type(:u8)
-|> Kino.Image.new()
+|> Output.image()
 
 # But there are still many black pixels left.
 # Assigning them a rank as well will be the next step
@@ -347,8 +410,7 @@ final_ranks
 # for display purposes we need to scale the pixels into a range 0-255
 |> Nx.divide(Nx.reduce_max(final_ranks))
 |> Nx.multiply(255)
-|> Nx.as_type(:u8)
-|> Kino.Image.new()
+|> Output.image()
 ```
 
 ```elixir
@@ -357,8 +419,7 @@ final_ranks
 initial_white_noise
 |> Nx.reshape({size,size, 1})
 |> Nx.multiply(255)
-|> Nx.as_type(:u8)
-|> Kino.Image.new()
+|> Output.image()
 ```
 
 <!-- livebook:{"reevaluate_automatically":true} -->
@@ -375,11 +436,8 @@ final_ranks
 |> Nx.less(threshold)
 |> Nx.multiply(255)
 |> Nx.reshape({size,size, 1})
-|> Nx.as_type(:u8)
-|> Kino.Image.new()
+|> Output.image()
 ```
-
-
 
 ```elixir
 # Again contrast this with the thresholded original uniform noice distribution:
@@ -391,63 +449,5 @@ initial_white_noise
 |> Nx.less(16)
 |> Nx.multiply(255)
 |> Nx.reshape({size,size, 1})
-|> Nx.as_type(:u8)
-|> Kino.Image.new()
-```
-
-## Helper functions
-
-Unfortunately some very basic signal processing tools are not included in the Nx package and must be defined manually.
-
-```elixir
-# Helper function to generate a Gaussian kernel
-defmodule Gauss do 
-  def kernel(size, sigma) do
-    radius = div(size, 2)
-    Nx.tensor(
-      for y <- -radius..radius do
-        for x <- -radius..radius do
-          :math.exp(-(x*x + y*y)/(2*sigma*sigma))
-        end
-      end
-    )
-    |> then(&(Nx.divide(&1, Nx.sum(&1))))
-  end
-end
-
-Gauss.kernel(32, 3) 
-|> Nx.reshape({33,33, 1})
-|> then(&Nx.divide(&1, Nx.reduce_max(&1)))
-|> Nx.multiply(255)
-|> Nx.as_type(:u8)
-|> Kino.Image.new()
-```
-
-```elixir
-# Helper function to apply cyclic padding to an image tensor
-defmodule NxHelpers do
-  def cyclic_pad(t, pad_size) do
-    h = elem(t.shape, 0)
-    w = elem(t.shape, 1)
-
-    # pad vertical
-    top    = Nx.slice(t, [h - pad_size, 0], [pad_size, w])
-    bottom = Nx.slice(t, [0, 0], [pad_size, w])
-    t_vert = Nx.concatenate([top, t, bottom], axis: 0)
-
-    # pad horizontal
-    left  = Nx.slice(t_vert, [0, w - pad_size], [elem(t_vert.shape, 0), pad_size])
-    right = Nx.slice(t_vert, [0, 0], [elem(t_vert.shape, 0), pad_size])
-    
-    Nx.concatenate([left, t_vert, right], axis: 1)
-  end
-end
-
-Gauss.kernel(8, 2) 
-|> NxHelpers.cyclic_pad(5)
-|> Nx.new_axis(-1)
-|> then(&Nx.divide(&1, Nx.reduce_max(&1)))
-|> Nx.multiply(255)
-|> Nx.as_type(:u8)
-|> Kino.Image.new()
+|> Output.image()
 ```
