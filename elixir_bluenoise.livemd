@@ -1,0 +1,453 @@
+# Generating Blue Noise with Nx
+
+```elixir
+Mix.install([
+  {:nx, "~> 0.10.0"},
+  {:kino, "~> 0.18.0"}
+])
+```
+
+## Preface
+
+This livebook shows how to generate 2-dimensional blue noise via Elixir Nx.
+
+This is a translation from Python to Elixir of [the original Python/Numpy version](https://static.laszlokorte.de/blue-noise/)
+
+## Introduction
+
+[Video Demo](https://www.youtube.com/watch?v=ORsTjpy5CH8) | [Jupyter Notebook with further examples](https://github.com/laszlokorte/bluenoise-notebook/blob/main/bluenoise.ipynb) This is an interactive demonstration of the [Void and Cluster](https://ieeexplore.ieee.org/document/3288/) algorithm for generating blue noise. [There are](http://momentsingraphics.de/BlueNoise.html) already [plenty of](https://observablehq.com/@bensimonds/mitchells-best-candidate-algorithm) excellent explorations on [how](https://blog.demofox.org/2019/06/25/generating-blue-noise-textures-with-void-and-cluster/) [and why](https://www.youtube.com/watch?v=tethAU66xaA) to generate [blue noise](https://en.wikipedia.org/wiki/Colors_of_noise), [and noises of other color](https://blog.demofox.org/2017/10/25/transmuting-white-noise-to-blue-red-green-purple/). The _Void and Cluster_ algorithm is one of [several promiment algorithms](https://blog.demofox.org/2017/10/20/generating-blue-noise-sample-points-with-mitchells-best-candidate-algorithm/). [Some advantages](https://blog.demofox.org/2018/08/12/not-all-blue-noise-is-created-equal/) over other algorithms are that the blue noise is of very good quality and that only the first step in the algorithm is non-deterministic.
+
+### This livebook
+
+The goal of this livebook is to provide additional insight by visualizing the core idea of this algorithm.
+
+This insight might be used to better unstand the algorithm itself, for example to recognize potential performance improvements. But it might also be used as source of inspiration on how to design a custom algorithm. The algorithm below is implemented in Nx using an array oriented style. In this regard it can also be used as a case-study on how a sophisticated algorithm (that may [take multiple hundred lines in C++](https://github.com/Atrix256/VoidAndCluster/blob/master/generatebn_void_cluster.cpp)) can be written very succinctly when relying on higher level concepts, such as convolution and rank-polymorphism.
+
+### Blue Noise
+
+A sequence of random numbers is called _blue noise_ if succeeding numbers are very likely to be very different. This is in contrast to white noise, where each number would be completely unrelated to each other number in the squence. In a white noise sequency it would neither be surprising for the similar numbers occur right next to each other, nor would it be surprising for two succeeding values to be quite far appart. In blue noise neighbors are expected to be different. The opposite would be red noise, where neighboring values are expected to be at least similar.
+
+The characteristic check if a sequence is _blue noise_ is to compute its [Power spectral density](https://en.wikipedia.org/wiki/Spectral_density#Power_spectral_density) (the magnitude-square of its Fourier Transform) and then to check that it contains only high frequencies.
+
+### The algorithm
+
+When generating 2D blue noise, as in the example below, the goal is to assign each pixel in the image a distinct intensity value, such that the intensity difference of neighboring pixels gets maximized.
+
+Explore the code below…
+
+<details>
+  <summary>…or read the natural language explanation
+</summary>
+
+  The algorithm consists of multiple phases.
+
+1.  **Initilization** (the only non-deterministic step, because of the `Nx.Random.uniform()` call):
+    
+    *   Generate white noise (`initial_white_noise`)
+    *   Threshold the white noise to select a random subset (~10%) of pixels, as binary image (`placed_pixels`)
+
+3.  **Phase1: Spreading**
+    
+    The randomly `placed_pixels` might be clustered in some areas and sparse in some other areas. This a because a un-correlated(white noise) random generator is used. To spread the pixels more evenly:
+    
+    *   Blur the `placed_pixels` with a gaussian filter to estimate the density across the image
+    *   Move a `placed_pixel` from the highest densesity area to the most void empty position
+    *   …repeat until dense and void areas converge
+
+4.  **Phase 2: Assign distinct intensities to pixels**
+    
+    The random subset of `placed_pixels` is now spread as far as possible across the image.  
+    Next we assign each of them a distinct intensity value (starting at 0) by iterating through the set in descending order:
+    
+    *   Blur the `placed_pixels`
+    *   Select the pixel with highest density
+    *   Assign a new intensity value to this pixel
+    *   Repeat until each pixel in `placed_pixels` has been processed
+5.  **Phase 3: Add remaining pixels**
+    
+    Up until now only a subset of the pixels (~10%) have been processed. To generate the remaining 90% of pixels:
+    
+    *   Blur the `placed_pixels`
+    *   Select the empty pixel with lowest density
+    *   Add this pixel to the `placed_pixels`
+    *   Assign this pixel the next available intensity (`rank`) value in the output image
+    *   …repeat until no more pixels left.
+</details>
+
+## Initial Setup
+
+First we define some intial parameters
+
+```elixir
+# Intitial random number generator
+random_seed = Nx.Random.key(108)
+:ok
+```
+
+```elixir
+# The size of the (square) noise image to generate
+size = 32
+# The ratio of pixel to initialize randomly in the beginning
+initial_ratio = 0.1
+
+# Size of the Gauss filter to use
+gauss_size = 11 # how strong to blur the image for estimating maximum density
+gauss_pad = div(gauss_size-1, 2) # Padding to apply before convoluton (half the kernel size)
+gauss_kernel = Gauss.kernel(gauss_size, 1.8) # Prececulate gaussian kernel of dimension {1,1,w,h}
+    |> Nx.new_axis(0)
+    |> Nx.new_axis(0)
+
+# Generate some initial uniform noise
+{initial_white_noise, _new_key} = random_seed |> Nx.Random.uniform(shape: {size, size}, type: :f32)
+:ok
+```
+
+```elixir
+# Take a look at this simple white noise.
+# Each pixel has a random intensity value but you see some clustering
+# caused by some pixel having the same value as their neighbours by pure chance.
+initial_white_noise 
+|> Nx.reshape({size,size, 1})
+|> Nx.multiply(255)
+|> Nx.as_type(:u8)
+|> Kino.Image.new()
+
+# Our goal will be to get rid of this randomly occuring clustering
+# while preserving the overall randomness of pixel values
+```
+
+```elixir
+# turn uniform noise into binary (black/white, 1/0) image by thresholding
+initial_placement = initial_white_noise |> Nx.greater(1-initial_ratio) |> Nx.flatten()
+
+# initial white pixel
+placed_pixels = initial_placement |> Nx.flatten()
+# number of initially white pixels pixels
+count_placed = Nx.sum(placed_pixels) |> Nx.to_number()
+# number of initially black pixels
+count_remaining = Nx.size(placed_pixels) - count_placed
+```
+
+```elixir
+# The initial random distribution of black and white pixels is not spaced evenly across the image
+# there are some rather empty areas and some more densely populated areas.
+placed_pixels
+|> Nx.reshape({size, size}) 
+|> Nx.reshape({size, size}) 
+|> Nx.flatten() 
+|> Nx.reshape({size,size, 1})
+|> Nx.multiply(255)
+|> Nx.as_type(:u8)
+|> Kino.Image.new()
+```
+
+```elixir
+# The average density of white pixels can be estimated by blurring the image
+# Notice how in the blurred image there a some very bright and some very dark spots
+
+placed_pixels
+|> Nx.reshape({size, size}) 
+|> NxHelpers.cyclic_pad(gauss_pad)
+|> Nx.new_axis(0)
+|> Nx.new_axis(0)
+|> Nx.conv(gauss_kernel, padding: :valid)
+|> Nx.reshape({size, size}) 
+|> Nx.flatten() 
+|> Nx.reshape({size,size, 1})
+|> then(&(Nx.divide(&1, Nx.reduce_max(&1))))
+|> Nx.multiply(255)
+|> Nx.as_type(:u8)
+|> Kino.Image.new()
+```
+
+```elixir
+# Next step:
+# Iteratively swap the white pixels with black pixels to achive more evenly spaced 
+# distribution of white pixels.
+
+# Starting with the initial random placement white pixels
+# we swap two pixels (one black and one white pixel) per iteration 
+# until we can no longer improve the spacing
+swaps = Stream.unfold({{nil, nil}, placed_pixels}, fn {prev_swap, placed} -> 
+  # blur the white pixels to estimate the density overall density
+  blurred = placed
+    |> Nx.reshape({size, size}) 
+    |> NxHelpers.cyclic_pad(gauss_pad)
+    |> Nx.new_axis(0)
+    |> Nx.new_axis(0)
+    |> Nx.conv(gauss_kernel, padding: :valid)
+    |> Nx.reshape({size, size}) 
+    |> Nx.flatten() 
+
+
+  # find the location of highest density (with the pixel itself at that location also being white)
+  densest = Nx.multiply(blurred, placed) |> Nx.argmax(tie_break: :low) |> Nx.to_number()
+  # and find the location of lowest density (with the pixel itself at the location being black)
+  voidest = Nx.add(blurred, placed) |> Nx.argmin(tie_break: :low) |> Nx.to_number()
+
+  # check if these two locations have already been swapped just before
+  # to avoid cyclic swapping back and forth
+  if prev_swap != {densest, voidest} and prev_swap != {voidest, densest} and densest != voidest do 
+
+    # (We use `Nx.indexed_put` for setting indivual pixels and this function expects the index and value 
+    # in some weird format)
+    
+    # prepare the indices for swapping
+    swap_indices = Nx.tensor([densest, voidest]) |> Nx.new_axis(-1)
+    # prepare the values for swapping
+    swap_values = Nx.tensor([0, 1])
+  
+    # swap the pixel at the lowest density with the pixel at highest density
+    updated = placed |> Nx.indexed_put(swap_indices, swap_values)
+
+    # pass the updated image to the next iteration
+    # and carry some debug information along
+    {{{densest, voidest, blurred}, updated}, {{densest,voidest}, updated}}  
+  else
+    # stop iteration
+    nil
+  end
+end)
+
+# collect result of the last iteration and some debug data
+{{_,_,debug_blurred}, not_ranked} = swaps 
+# Continue with the result of the last iteration
+|> Enum.at(-1)
+
+nil
+```
+
+```elixir
+# See how many iterations we took:
+Enum.count(swaps) # 36 swaps on my machine when I last tried
+```
+
+```elixir
+# Look now the distributions of white pixels is much better now!
+# (same number of white pixels as before, but at other locations, spaced more evenly)
+not_ranked
+|> Nx.reshape({size,size, 1})
+|> Nx.divide(Nx.reduce_max(not_ranked))
+|> Nx.multiply(255)
+|> Nx.as_type(:u8)
+|> Kino.Image.new()
+```
+
+```elixir
+# You can also see that the blurred image is much smoother
+# ie. the distribution is more uniform
+debug_blurred
+|> Nx.reshape({size,size, 1})
+|> Nx.divide(Nx.reduce_max(debug_blurred))
+|> Nx.multiply(255)
+|> Nx.as_type(:u8)
+|> Kino.Image.new()
+```
+
+```elixir
+# Next we want to number the white pixels uniquely with ascending integer values
+# Since the white pixels are already spread quiet apart from eath other, no pixel
+# will get a similar value as its direct neighbour.
+
+# We call the value that we assign to a pixels its `rank`
+
+# Starting with a new empty image for storing the rank
+empty_ranks = Nx.broadcast(0, Nx.shape(initial_white_noise)) |> Nx.flatten()
+
+# We iteratively remove one pixel after another, each time from the densest location
+# and assign an incrementing label (rank) to its location in the empty image
+# This gives us unique increasing pixel values with at least some spatial distance to each other
+# in the resulting image
+# We repeat this count_placed times since this is the number of white pixels we are able to pick and remove
+{new_ranks, new_not_ranked} = for rank <- count_placed..1//-1, reduce: {empty_ranks, not_ranked} do
+  {ranks, not_ranked} ->
+    # Blur the image of white pixels to estimate the density
+    blurred = not_ranked
+    |> Nx.reshape({size, size}) 
+    |> NxHelpers.cyclic_pad(gauss_pad)
+    |> Nx.new_axis(0)
+    |> Nx.new_axis(0)
+    |> Nx.conv(gauss_kernel, padding: :valid)
+    |> Nx.flatten() 
+
+    # find highest density (that has no rank assigned yet)
+    densest = Nx.multiply(blurred, not_ranked) |> Nx.argmax()
+    |> Nx.new_axis(0)|> Nx.new_axis(0)
+
+    # remove the pixel at the highest density location
+    new_not_ranked = not_ranked
+    |> Nx.indexed_put(densest, Nx.tensor([0.0]))
+
+    # insert increaing counter value (rank) at the same location in the new blank image
+    new_ranks = ranks
+    |> Nx.indexed_put(densest, Nx.tensor([rank]))
+
+    # continue with updated images until no white pixels are left to remove
+    {new_ranks, new_not_ranked}
+end
+
+nil
+```
+
+```elixir
+# Look how we now have a well spaced out distributon of unique increasing values 
+new_ranks
+|> Nx.reshape({size,size, 1})
+|> Nx.as_type(:u8)
+|> Kino.Image.new()
+
+# But there are still many black pixels left.
+# Assigning them a rank as well will be the next step
+```
+
+```elixir
+# To fill the remaining pixels we repeat the same iteration as before but now in reverse:
+# Instead of picking locations of high density we pick locations of lowest density
+
+# We know how many pixels the image has in total and how many pixels we did already process
+# so we also know how many pixels are left: `count_remaining`
+{final_ranks, final_placed} = for rank <- 0..(count_remaining-1), reduce: {new_ranks, not_ranked}  do
+  {ranks, placed} ->
+    # Blur the image to estimate the density
+    blurred = placed
+    |> Nx.reshape({size, size}) 
+    |> NxHelpers.cyclic_pad(gauss_pad)
+    |> Nx.new_axis(0)
+    |> Nx.new_axis(0)
+    |> Nx.conv(gauss_kernel, padding: :valid)
+    |> Nx.flatten() 
+
+    # Pick the location of lowest density (that has now pixel placed yet)
+    voidest = Nx.add(blurred, placed) |> Nx.argmin()
+    |> Nx.new_axis(0)|> Nx.new_axis(0)
+
+    # Add the pixel to the collection of placed pixels by setting it to 1 (white)
+    updated_placed = placed
+    |> Nx.indexed_put(voidest, Nx.tensor([1.0]))
+
+    # Assign a new rank value at this location
+    updated_ranks = ranks
+    |> Nx.indexed_put(voidest, Nx.tensor([count_placed + rank]))
+
+    # continue interation with updated ranks and placed pixels
+    {updated_ranks, updated_placed}
+end
+
+nil
+```
+
+```elixir
+# Now look at the final result:
+# we have a 32x32 image (1024 pixels in total) with 1024 different pixel values
+# evenly spaced out across the image
+# Each pixel has a value (rank) that is very different from all its neighbour
+# due to the order in which we assigned the values
+final_ranks
+|> Nx.reshape({size,size, 1})
+# for display purposes we need to scale the pixels into a range 0-255
+|> Nx.divide(Nx.reduce_max(final_ranks))
+|> Nx.multiply(255)
+|> Nx.as_type(:u8)
+|> Kino.Image.new()
+```
+
+```elixir
+# Compare the result to our initial uniform random distribution of pixels: 
+# In the intial distribution you can see light and dark clusters
+initial_white_noise
+|> Nx.reshape({size,size, 1})
+|> Nx.multiply(255)
+|> Nx.as_type(:u8)
+|> Kino.Image.new()
+```
+
+<!-- livebook:{"reevaluate_automatically":true} -->
+
+```elixir
+# Lets try to threshold our result: setting only pixels to white whose value is above a certrain threshold. 
+# Notice how only some of the pixel remain white (32/255) but they are evenly spaced out
+# Try change the threshold to increase the number of white pixels and see how the spacing keeps nice
+threshold = 16
+
+final_ranks
+|> Nx.divide(Nx.reduce_max(final_ranks))
+|> Nx.multiply(255)
+|> Nx.less(threshold)
+|> Nx.multiply(255)
+|> Nx.reshape({size,size, 1})
+|> Nx.as_type(:u8)
+|> Kino.Image.new()
+```
+
+
+
+```elixir
+# Again contrast this with the thresholded original uniform noice distribution:
+# the clustering is very obvious
+threshold = 16
+
+initial_white_noise
+|> Nx.multiply(255)
+|> Nx.less(16)
+|> Nx.multiply(255)
+|> Nx.reshape({size,size, 1})
+|> Nx.as_type(:u8)
+|> Kino.Image.new()
+```
+
+## Helper functions
+
+Unfortunately some very basic signal processing tools are not included in the Nx package and must be defined manually.
+
+```elixir
+# Helper function to generate a Gaussian kernel
+defmodule Gauss do 
+  def kernel(size, sigma) do
+    radius = div(size, 2)
+    Nx.tensor(
+      for y <- -radius..radius do
+        for x <- -radius..radius do
+          :math.exp(-(x*x + y*y)/(2*sigma*sigma))
+        end
+      end
+    )
+    |> then(&(Nx.divide(&1, Nx.sum(&1))))
+  end
+end
+
+Gauss.kernel(32, 3) 
+|> Nx.reshape({33,33, 1})
+|> then(&Nx.divide(&1, Nx.reduce_max(&1)))
+|> Nx.multiply(255)
+|> Nx.as_type(:u8)
+|> Kino.Image.new()
+```
+
+```elixir
+# Helper function to apply cyclic padding to an image tensor
+defmodule NxHelpers do
+  def cyclic_pad(t, pad_size) do
+    h = elem(t.shape, 0)
+    w = elem(t.shape, 1)
+
+    # pad vertical
+    top    = Nx.slice(t, [h - pad_size, 0], [pad_size, w])
+    bottom = Nx.slice(t, [0, 0], [pad_size, w])
+    t_vert = Nx.concatenate([top, t, bottom], axis: 0)
+
+    # pad horizontal
+    left  = Nx.slice(t_vert, [0, w - pad_size], [elem(t_vert.shape, 0), pad_size])
+    right = Nx.slice(t_vert, [0, 0], [elem(t_vert.shape, 0), pad_size])
+    
+    Nx.concatenate([left, t_vert, right], axis: 1)
+  end
+end
+
+Gauss.kernel(8, 2) 
+|> NxHelpers.cyclic_pad(5)
+|> Nx.new_axis(-1)
+|> then(&Nx.divide(&1, Nx.reduce_max(&1)))
+|> Nx.multiply(255)
+|> Nx.as_type(:u8)
+|> Kino.Image.new()
+```
