@@ -1,3 +1,5 @@
+<!-- livebook:{"app_settings":{"access_type":"public","auto_shutdown_ms":5000,"slug":"bluenoise"},"default_language":"erlang"} -->
+
 # Generating Blue Noise with Nx
 
 ```elixir
@@ -6,6 +8,8 @@ Mix.install([
   {:kino, "~> 0.18.0"},
   {:image, "~> 0.62.1"}
 ])
+
+Kino.nothing()
 ```
 
 ## Preface
@@ -84,6 +88,7 @@ Unfortunately some very basic signal processing tools are not included in the Nx
 ```elixir
 # helper to output small images upscaled via CSS
 defmodule Output do
+  # Output a single image
   def image(tensor, args \\ []) do
     min = Nx.reduce_min(tensor)
     max = Nx.reduce_max(tensor)
@@ -143,9 +148,148 @@ defmodule Output do
     </figure>
     """)
   end
+
+  # Output a 4d tensor as sequence of multiple images
+  def stack(tensor, args \\ []) do
+    {frames, w, h, c} = Nx.shape(tensor) |> case do 
+      {frames, w, h, 3} -> {frames, w, h, 3}
+      {frames, w, h, 1} -> {frames, w, h, 1}
+      {frames, w, h} -> {frames, w, h, 1}
+    end
+    min = Nx.reduce_min(tensor)
+    max = Nx.reduce_max(tensor)
+    range = Nx.subtract(max, min)
+    normalized = if Keyword.get(args, :normalize, true) do
+      tensor |> Nx.subtract(min) |> Nx.divide(range) |> Nx.multiply(255) |> Nx.as_type(:u8) 
+    else
+      tensor |> Nx.as_type(:u8) 
+    end
+      
+    images = for f <- 0..(frames-1) do
+    
+      image = normalized 
+        |> Nx.slice_along_axis(f, 1, axis: 0)
+        |> Nx.reshape({w,h,c}) 
+        |> Image.from_nx!()
+
+      
+    {:ok, binary} = image |> Vix.Vips.Image.write_to_buffer(".png")
+
+      Base.encode64(binary)
+    end
+
+    image_tags = for {base64, i} <- Enum.with_index(images) do 
+    """
+    <img style="z-index: #{frames - i}" width="#{w}" height="#{h}" class="plot stack-item" src="data:image/png;base64,#{base64}" alt="" />
+    """
+    end |> Enum.join("\n")
+
+    Kino.HTML.new("""
+    <style>
+    .plot-figure {
+    display: grid;
+    justify-content: stretch;
+    margin: 0;
+    padding: 0;
+    gap: 1em;
+    }
+    .plot {
+    image-rendering:pixelated;
+    object-fit: contain;
+      object-position: 0%;
+    width: 10em;
+    max-width: 20em;
+    height: auto;
+    max-height: 20em;
+    width: 100%;
+    }
+    dl {
+    font-family: monospace;
+      display: grid;
+      grid-template-columns: auto auto;
+      justify-content: start;
+      gap: 1ex 1em;
+    }
+    dt, dd {
+    margin: 0;
+    }
+
+    .stack {
+    display: grid;
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr;
+    justify-content: stretch;
+    }
+
+    .stack-item {
+     grid-area: 1/1/2/2;
+    }
+    </style>
+    <figure class="plot-figure">
+    <div class="stack">
+    #{image_tags}
+    </div>
+    
+    <figcaption>
+    <strong>Image: #{Keyword.get(args, :titel)}</strong>
+    <dl>
+      <dt>Frame</dt>
+    <dd>
+    <input oninput="Array.prototype.forEach.call(this.closest('figure').querySelector('.stack').children, (c,i) => {c.style.zIndex = i==this.valueAsNumber?10:0});this.nextElementSibling.value=this.valueAsNumber" type="range" min="0" max="#{frames-1}" value="0"  step="1"/>
+    <output>0</output>
+    </dd>
+    <dt>Size (w &times; h &times; c)</dt>
+    <dd>#{w} &times; #{h} &times; #{c}</dd>
+    <dt>Type</dt>
+    <dd>#{inspect(Nx.type(tensor))}</dd>
+    <dt>Min</dt>
+    <dd>#{Nx.reduce_min(tensor) |> Nx.to_number()}</dd>
+    <dt>Max</dt>
+    <dd>#{Nx.reduce_max(tensor) |> Nx.to_number()}</dd>
+    </dl>
+    </figcaption>
+    </figure>
+    """)
+  end
 end
 
-:ok
+Kino.nothing()
+```
+
+```elixir
+Nx.tensor([
+[
+  [1,2,3],[1,2,3],
+  [1,2,3],[1,10,3],
+  [10,2,3],[1,1,3],
+  [1,2,3],[1,2,3],
+  [1,2,3],[1,10,3],
+  [10,2,3],[1,1,3],
+  [1,2,3],[1,2,3]
+],
+  [
+  [1,2,3],[1,2,3],
+  [1,2,5],[13,1,3],
+  [1,1,3],[5,10,3],
+  [1,2,3],[1,2,3],
+  [1,2,5],[13,1,3],
+  [1,1,3],[5,10,3],
+  [1,2,3],[1,2,3]
+],
+  [
+  [1,1,3],[5,10,3],
+  [1,2,3],[1,2,3],
+  [1,2,5],[13,1,3],
+  [1,2,3],[1,2,3],
+  [1,2,5],[13,1,3],
+  [1,1,3],[5,10,3],
+  [1,2,3],[1,2,3]
+]
+])
+|> Nx.reshape({:auto,2,7,3})
+|> Output.stack()
+
+Kino.nothing()
 ```
 
 ```elixir
@@ -204,7 +348,8 @@ First we define some intial parameters
 ```elixir
 # Intitial random number generator
 random_seed = Nx.Random.key(108)
-:ok
+
+Kino.nothing()
 ```
 
 ```elixir
@@ -222,7 +367,8 @@ gauss_kernel = Gauss.kernel(gauss_size, 1.8) # Prececulate gaussian kernel of di
 
 # Generate some initial uniform noise
 {initial_white_noise, _new_key} = random_seed |> Nx.Random.uniform(shape: {size, size}, type: :f32)
-:ok
+
+Kino.nothing()
 ```
 
 ```elixir
@@ -237,6 +383,8 @@ initial_white_noise
 # while preserving the overall randomness of pixel values
 ```
 
+## Threshold Initial Noise Map
+
 ```elixir
 # turn uniform noise into binary (black/white, 1/0) image by thresholding
 initial_placement = initial_white_noise |> Nx.greater(1-initial_ratio) |> Nx.flatten()
@@ -247,6 +395,8 @@ placed_pixels = initial_placement |> Nx.flatten()
 count_placed = Nx.sum(placed_pixels) |> Nx.to_number()
 # number of initially black pixels
 count_remaining = Nx.size(placed_pixels) - count_placed
+
+Kino.nothing()
 ```
 
 ```elixir
@@ -259,6 +409,8 @@ placed_pixels
 |> Nx.reshape({size,size, 1})
 |> Output.image(titel: "Thresholded White noise")
 ```
+
+## Estimating Pixel Density via Blur
 
 ```elixir
 # The average density of white pixels can be estimated by blurring the image
@@ -276,6 +428,8 @@ placed_pixels
 |> then(&(Nx.divide(&1, Nx.reduce_max(&1))))
 |> Output.image(titel: "Estimated pixel density")
 ```
+
+## Phase 1: Swap Pixel from Densest with Pixel from Voidest Region
 
 ```elixir
 # Next step:
@@ -331,13 +485,39 @@ end)
 # Continue with the result of the last iteration
 |> Enum.at(-1)
 
-nil
+Kino.nothing()
+```
+
+## Step through the Swap steps of Phase 1
+
+```elixir
+swaps
+|> Enum.map(fn {{_,_,blurred}, not_ranked} -> 
+  b = blurred |> Nx.reshape({size,size}) |> Nx.as_type(:f32)
+  min = Nx.reduce_min(b)
+  max = Nx.reduce_max(b)
+  range = Nx.subtract(max, min)
+  b = b |> Nx.subtract(min) |> Nx.divide(range)  |> Nx.divide(2)  |> Nx.add(0.5) 
+   |> Nx.multiply(255) 
+  
+  r = not_ranked |> Nx.reshape({size,size})|> Nx.multiply(255) |> Nx.as_type(:f32)
+  
+   Nx.stack([
+     Nx.pad(r,10, [{2,2,0}, {2,2,0}]), 
+     Nx.pad(b, 10, [{2,2,0}, {2,2,0}])
+   ], axis: 1)
+  end)
+|> Nx.concatenate()
+|> Nx.reshape({:auto,2*(size+4),(size+4),1})
+|> Output.stack(titel: "Placed pixels (left) and Density estimation (right) after each swap", normalize: false)
 ```
 
 ```elixir
 # See how many iterations we took:
 Enum.count(swaps) # 36 swaps on my machine when I last tried
 ```
+
+## White Pixels are evenly spaced now
 
 ```elixir
 # Look now the distributions of white pixels is much better now!
@@ -357,6 +537,8 @@ debug_blurred
 |> Output.image(titel: "Estimated pixel density after repositioning pixels")
 ```
 
+## Phase 2: Label the spaced out Pixels with incrementing Number
+
 ```elixir
 # Next we want to number the white pixels uniquely with ascending integer values
 # Since the white pixels are already spread quiet apart from eath other, no pixel
@@ -372,8 +554,8 @@ empty_ranks = Nx.broadcast(0, Nx.shape(initial_white_noise)) |> Nx.flatten()
 # This gives us unique increasing pixel values with at least some spatial distance to each other
 # in the resulting image
 # We repeat this count_placed times since this is the number of white pixels we are able to pick and remove
-{new_ranks, new_not_ranked} = for rank <- count_placed..1//-1, reduce: {empty_ranks, not_ranked} do
-  {ranks, not_ranked} ->
+{new_ranks, new_not_ranked, rank_debug_trace} = for rank <- count_placed..1//-1, reduce: {empty_ranks, not_ranked, [{empty_ranks, not_ranked}]} do
+  {ranks, not_ranked, debug_trace} ->
     # Blur the image of white pixels to estimate the density
     blurred = not_ranked
     |> Nx.reshape({size, size}) 
@@ -396,11 +578,32 @@ empty_ranks = Nx.broadcast(0, Nx.shape(initial_white_noise)) |> Nx.flatten()
     |> Nx.indexed_put(densest, Nx.tensor([rank]))
 
     # continue with updated images until no white pixels are left to remove
-    {new_ranks, new_not_ranked}
+    {new_ranks, new_not_ranked, [{new_ranks, new_not_ranked}|debug_trace]}
 end
 
-nil
+Kino.nothing()
 ```
+
+## Replay the Steps from Phase 2
+
+```elixir
+rank_debug_trace
+|> Enum.map(fn {ranks, placed}  -> 
+
+  r = placed |> Nx.reshape({size,size})|> Nx.as_type(:f32)|> Nx.multiply(255) 
+  rs = ranks  |> Nx.reshape({size,size}) |> Nx.as_type(:f32)|> Nx.multiply(255)
+   Nx.stack([
+     Nx.pad(r,100, [{2,2,0}, {2,2,0}]), 
+     Nx.pad(rs, 100, [{2,2,0}, {2,2,0}]),
+   ], axis: 1)
+  end)
+|> Nx.concatenate()
+|> Nx.reshape({:auto,2*(size+4),(size+4),1})
+|> Nx.reverse(axes: [0])
+|> Output.stack(titel: "Unlabeled pixel (left) and Labeled Pixels (right)", normalize: false)
+```
+
+## Phase 2 Results
 
 ```elixir
 # Look how we now have a well spaced out distributon of unique increasing values 
@@ -412,14 +615,16 @@ new_ranks
 # Assigning them a rank as well will be the next step
 ```
 
+## Phase 3: Fill in the remaining pixels
+
 ```elixir
 # To fill the remaining pixels we repeat the same iteration as before but now in reverse:
 # Instead of picking locations of high density we pick locations of lowest density
 
 # We know how many pixels the image has in total and how many pixels we did already process
 # so we also know how many pixels are left: `count_remaining`
-{final_ranks, final_placed} = for rank <- 0..(count_remaining-1), reduce: {new_ranks, not_ranked}  do
-  {ranks, placed} ->
+{final_ranks, final_placed, debug_trace} = for rank <- 0..count_remaining, reduce: {new_ranks, not_ranked, []}  do
+  {ranks, placed, debug_steps} ->
     # Blur the image to estimate the density
     blurred = placed
     |> Nx.reshape({size, size}) 
@@ -442,11 +647,39 @@ new_ranks
     |> Nx.indexed_put(voidest, Nx.tensor([count_placed + rank]))
 
     # continue interation with updated ranks and placed pixels
-    {updated_ranks, updated_placed}
+    {updated_ranks, updated_placed, [{voidest, blurred, ranks, placed} | debug_steps]}
 end
 
-nil
+Kino.nothing()
 ```
+
+## Replay the Steps from Phase 3
+
+```elixir
+debug_trace
+|> Enum.map(fn {_voidest, blurred, ranks, placed}  -> 
+  b = blurred |> Nx.reshape({size,size}) |> Nx.as_type(:f32)
+  min = Nx.reduce_min(b)
+  max = Nx.reduce_max(b)
+  range = Nx.subtract(max, min) |> Nx.max(Nx.tensor(1.0e-12))
+  b = b |> Nx.subtract(min) |> Nx.divide(range)  |> Nx.divide(2)  |> Nx.add(0.5) 
+   |> Nx.multiply(255) 
+  
+  r = placed |> Nx.reshape({size,size})|> Nx.as_type(:f32)|> Nx.multiply(255) 
+  rs = ranks  |> Nx.reshape({size,size}) |> Nx.as_type(:f32)|> Nx.multiply(255)
+   Nx.stack([
+     Nx.pad(r,10, [{2,2,0}, {2,2,0}]), 
+     Nx.pad(b, 10, [{2,2,0}, {2,2,0}]),
+     Nx.pad(rs, 10, [{2,2,0}, {2,2,0}]),
+   ], axis: 1)
+  end)
+|> Nx.concatenate()
+|> Nx.reshape({:auto,3*(size+4),(size+4),1})
+|> Nx.reverse(axes: [0])
+|> Output.stack(titel: "Placed Pixels (left), Density estimation (center) and Pixel labels (right)", normalize: false)
+```
+
+## Final Results
 
 ```elixir
 # Now look at the final result:
