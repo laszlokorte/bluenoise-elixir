@@ -2,6 +2,8 @@
 
 ![Screenshot](./preview.png)
 
+![Screenshot of example application](./example.png)
+
 ## Preface
 
 This livebook shows how to generate 2-dimensional blue noise via Elixir Nx.
@@ -17,3 +19,7 @@ This is a translation from Python to Elixir of [the original Python/Numpy versio
 The goal of this livebook is to provide additional insight by visualizing the core idea of this algorithm.
 
 This insight might be used to better unstand the algorithm itself, for example to recognize potential performance improvements. But it might also be used as source of inspiration on how to design a custom algorithm. The algorithm below is implemented in Nx using an array oriented style. In this regard it can also be used as a case-study on how a sophisticated algorithm (that may [take multiple hundred lines in C++](https://github.com/Atrix256/VoidAndCluster/blob/master/generatebn_void_cluster.cpp)) can be written very succinctly when relying on higher level concepts, such as convolution and rank-polymorphism.
+
+## Practical example
+
+Addtionally this notebook contains an example of how to use blue noise to blur an image [using 1SPP convolution](https://static.laszlokorte.de/sspp-conv/).
