@@ -1,4 +1,4 @@
-<!-- livebook:{"app_settings":{"access_type":"public","auto_shutdown_ms":5000,"slug":"bluenoise"},"default_language":"erlang"} -->
+<!-- livebook:{"app_settings":{"access_type":"public","auto_shutdown_ms":5000,"slug":"bluenoise"},"file_entries":[{"name":"girlperl.png","type":"attachment"}]} -->
 
 # Generating Blue Noise with Nx
 
@@ -92,9 +92,12 @@ defmodule Output do
   def image(tensor, args \\ []) do
     min = Nx.reduce_min(tensor)
     max = Nx.reduce_max(tensor)
-    range = Nx.subtract(max, min)
-    image =
-      tensor |> Nx.subtract(min) |> Nx.divide(range)  |> Nx.multiply(255) |> Nx.as_type(:u8) |> Image.from_nx!()
+    range = Nx.subtract(Keyword.get(args, :maxv, max), Keyword.get(args, :minv, min))
+    image = if Keyword.get(args, :normalize, true) do
+        tensor |> Nx.subtract(Keyword.get(args, :minv, min)) |> Nx.divide(range) |> Nx.multiply(255) |> Nx.as_type(:u8) 
+      else
+        tensor |> Nx.as_type(:u8) 
+    end |> Image.from_nx!()
 
     {:ok, binary} =
       image |> Vix.Vips.Image.write_to_buffer(".png")
@@ -160,9 +163,10 @@ defmodule Output do
       end
       min = Nx.reduce_min(tensor)
       max = Nx.reduce_max(tensor)
-      range = Nx.subtract(max, min)
+      range = Nx.subtract(Keyword.get(args, :maxv, max), Keyword.get(args, :minv, min))
+
       normalized = if Keyword.get(args, :normalize, true) do
-        tensor |> Nx.subtract(min) |> Nx.divide(range) |> Nx.multiply(255) |> Nx.as_type(:u8) 
+        tensor |> Nx.subtract(Keyword.get(args, :minv, min)) |> Nx.divide(range) |> Nx.multiply(255) |> Nx.as_type(:u8) 
       else
         tensor |> Nx.as_type(:u8) 
       end
@@ -195,7 +199,7 @@ defmodule Output do
         #{image_tags |> Enum.join("\n") }
         </div>
         <dl class="image-with-desc-desc">
-          <dt>Size (w &times; h &times; c)</dt>
+          <dt>Size<br><span>(w &times; h &times; c)</span></dt>
           <dd>#{w} &times; #{h} &times; #{c}</dd>
           <dt>Type</dt>
           <dd>#{inspect(type)}</dd>
@@ -261,9 +265,17 @@ defmodule Output do
       grid-template-columns: auto auto;
       justify-content: start;
       gap: 1ex 1em;
+      align-items: center;
+    }
+    dt {
+    font-weight: bold;
     }
     dt, dd {
     margin: 0;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+     gap: 1ex;
     }
 
     .stack {
@@ -275,6 +287,10 @@ defmodule Output do
 
     .stack-item {
      grid-area: 1/1/2/2;
+    }
+
+    input[type=range] {
+    height: 2.5em;
     }
     </style>
     <figure class="plot-figure">
@@ -579,24 +595,23 @@ Kino.nothing()
 |> Enum.map(fn {{_,_,blurred}, _} -> 
   b = blurred |> Nx.reshape({size,size}) |> Nx.as_type(:f32)
   min = Nx.reduce_min(b)
-  max = Nx.reduce_max(b)
-  range = Nx.subtract(max, min)
-  b |> Nx.subtract(min) |> Nx.divide(range)  |> Nx.divide(2)  |> Nx.add(0.5) 
-   |> Nx.multiply(255) 
-  
-  
+  b |> Nx.subtract(min) |> Nx.multiply(2) |> Nx.add(0.5) |> Nx.multiply(255)
   end)
 |> Nx.concatenate()
 |> Nx.reshape({:auto,size,size,1}),
+  
   swaps
 |> Enum.map(fn {_, not_ranked} -> 
-   not_ranked |> Nx.reshape({size,size})|> Nx.multiply(255) |> Nx.as_type(:f32)
+   not_ranked |> Nx.reshape({size,size}) |> Nx.multiply(255)
   
   end)
 |> Nx.concatenate()
   |> Nx.reshape({:auto,size,size,1}),
 ]
 |> Output.stack(titel: "Placed pixels (left) and Density estimation (right) after each swap", normalize: false)
+
+
+
 ```
 
 ```elixir
@@ -621,7 +636,7 @@ not_ranked
 debug_blurred
 |> Nx.reshape({size,size, 1})
 |> Nx.divide(Nx.reduce_max(debug_blurred))
-|> Output.image(titel: "Estimated pixel density after repositioning pixels")
+|> Output.image(titel: "Estimated pixel density after repositioning pixels", maxv: 1.0, minv: 0.0)
 ```
 
 ## Phase 2: Label the spaced out Pixels with incrementing Number
@@ -828,4 +843,201 @@ initial_white_noise
 |> Nx.less(16)
 |> Nx.reshape({size,size, 1})
 |> Output.image(titel: "Thresholded White Noise yields some dense and sparse spots")
+```
+
+## Example Application
+
+The code below shows an example for how to use the generated blue noise.
+We will use a technique called "1 sample per pixel convolution".
+It is an alternative approach in which for the convolution only a single pixel from the source image is used to calculate an output image.
+This is done be selecting pixels randomly from the source image.
+Specifically we will use the previously generated blue noise to determine exactly which pixels to select.
+
+[Further explanations for this appraoch can be found here](https://static.laszlokorte.de/sspp-conv/)
+
+```elixir
+# Sinc we want to blur an image, so we first generate a Gaussien kernel to convolve with
+gauss_kernel = Gauss.kernel(7, 1)
+
+gauss_kernel
+|> Nx.reshape({7, 7, 1}) 
+|> Output.image(titel: "Some Gauss kernel for blurring an image")
+```
+
+```elixir
+# Next we need an example image to work with. 
+# We load an rgba png file from disk and convert to grayscale
+{:ok, img} = Image.open(Kino.FS.file_path("girlperl.png"))
+{:ok, bin} = Vix.Vips.Image.write_to_binary(img)
+
+girl = bin |> Nx.from_binary(:u8) 
+|> Nx.reshape({64, 64, 4}) 
+|> Nx.mean(axes: [2])
+|> Nx.reshape({64, 64, 1})
+
+ girl 
+|> Output.image(titel: "Example Image (The Girl with Perl skills)")
+```
+
+```elixir
+# In preparation for later sampling we interpret the 
+# gaussian kernel as probablity density and calculate
+# the cummulative distribution via 1D prefix sum (Nx.cumulative_sum)
+{gw, gh} = Nx.shape(gauss_kernel)
+cumulative_gaus = gauss_kernel |> Nx.reshape({:auto})  |> Nx.cumulative_sum()
+
+# The top left most pixel is black and 
+# the bottom right most pixel is white
+cumulative_gaus |> Nx.reshape({gw, gh, 1})
+# We can simplify the 2-dim kernel to 1 dimension because
+# we just need to use it for sampling a single coord via a single
+# random value
+|> Output.image(titel: "1D cumulated Gauss kernel")
+```
+
+```elixir
+# Retreive dimensions of the gauss kernel...
+{gw,gh} = Nx.shape(gauss_kernel)
+# ... and the input image 
+{h, w, _} = Nx.shape(girl)
+
+# convert our generated blue noise (final_ranks) into square shape and into range 0..1
+noise_source = final_ranks |> Nx.reshape({size,size, 1}) |> Nx.divide(Nx.reduce_max(final_ranks))
+{n_h, n_w} = {size,size}
+
+# Generate array of size {h,w} containing indicies into the noise source {n_h, n_w}
+x = Nx.iota({h, w}, axis: 0) |> Nx.remainder(n_w) # x coord
+y = Nx.iota({h, w}, axis: 1) |> Nx.remainder(n_h) # y coord
+# flat index
+idx = x |> Nx.multiply(n_w) |> Nx.add(y)
+
+# sample the noise texture (our generated blue nosie) at each index position
+noise_values = noise_source
+|> Nx.reshape({n_h * n_w, 1})
+|> Nx.take(idx)
+|> Nx.reshape({h, w, 1})
+
+# For each sampled value select an index in the cummulative distribution
+# via Inverse transform sampling
+# Specifically: select the first index in the cumdist where the element is greater than our
+# random sample value
+sample_index = Nx.greater_equal(
+  Nx.reshape(noise_values, {:auto, 1}), 
+  Nx.reshape(cumulative_gaus, {1, :auto})
+) |> Nx.argmin(axis: 1)
+
+# Convert the sampled index from the kernel
+# into and x offset
+offset_x = sample_index |> Nx.remainder(gw)
+  # subtracting half the kernel width
+  |> Nx.subtract(Nx.divide(Nx.subtract(gw, 1), 2)) 
+  |> Nx.as_type({:s,8}) 
+
+# and an y offset
+offset_y = sample_index 
+  |> Nx.subtract(offset_x) 
+  |> Nx.divide(gw) 
+  # subtracting half the kernel height
+  |> Nx.subtract(Nx.divide(Nx.subtract(gh, 1), 2)) 
+  |> Nx.as_type({:s,8})
+
+# Generate x and y indices into our image and offset each of them
+# by one our generated offset values
+# (we generated exactly as many x and y offsets as there are pixels in our original image)
+sx = Nx.iota({h, w}, axis: 0) |> Nx.add(Nx.reshape(offset_x, {h, w})) |> Nx.remainder(w) |> Nx.add(w) |>Nx.remainder(w) 
+sy = Nx.iota({h, w}, axis: 1) |> Nx.add(Nx.reshape(offset_y, {h, w})) |> Nx.remainder(h) |> Nx.add(h) |>Nx.remainder(h) 
+# convert x and y coordinates into a flat coordinate
+sidx = sx |> Nx.multiply(w) |> Nx.add(sy)
+
+result = girl
+|> Nx.reshape({h * w, 1})
+|> Nx.take(sidx)
+|> Nx.reshape({h, w, 1})
+
+# Show the result
+result
+|> Output.image(titel: "Image Blurred via 1SSP Convolution with Blue Noise as Random Source")
+
+```
+
+```elixir
+# Instead of actually sampling our input image we can
+# also plot the sampling coordinates themself
+sidx
+|> Nx.reshape({h * w, 1})
+|> Nx.take(sidx)
+|> Nx.reshape({h, w, 1})
+|> Output.image(titel: "The coordinate values")
+```
+
+```elixir
+# Same as above but with multiple different Gauss kernels in comparious
+kernel_sizes = [0.0, 0.1, 0.3, 0.5, 0.8, 1.0, 1.2, 1.5, 2.0,2.2, 2.5,3.0]
+for stddev <- kernel_sizes do 
+gauss_kernel = 
+  Gauss.kernel(7, max(stddev, 0.0001))
+cumulative_gaus = gauss_kernel |> Nx.reshape({:auto})  |> Nx.cumulative_sum()
+
+# Retreive dimensions of the gauss kernel...
+{gw,gh} = Nx.shape(gauss_kernel)
+# ... and the input image 
+{h, w, _} = Nx.shape(girl)
+
+# convert our generated blue noise (final_ranks) into square shape and into range 0..1
+noise_source = final_ranks |> Nx.reshape({size,size, 1}) |> Nx.divide(Nx.reduce_max(final_ranks))
+{n_h, n_w} = {size,size}
+
+# Generate array of size {h,w} containing indicies into the noise source {n_h, n_w}
+x = Nx.iota({h, w}, axis: 0) |> Nx.remainder(n_w) # x coord
+y = Nx.iota({h, w}, axis: 1) |> Nx.remainder(n_h) # y coord
+# flat index
+idx = x |> Nx.multiply(n_w) |> Nx.add(y)
+
+# sample the noise texture (our generated blue nosie) at each index position
+noise_values = noise_source
+|> Nx.reshape({n_h * n_w, 1})
+|> Nx.take(idx)
+|> Nx.reshape({h, w, 1})
+
+# For each sampled value select an index in the cummulative distribution
+# via Inverse transform sampling
+# Specifically: select the first index in the cumdist where the element is greater than our
+# random sample value
+sample_index = Nx.greater_equal(
+  Nx.reshape(noise_values, {:auto, 1}), 
+  Nx.reshape(cumulative_gaus, {1, :auto})
+) |> Nx.argmin(axis: 1)
+
+# Convert the sampled index from the kernel
+# into and x offset
+offset_x = sample_index |> Nx.remainder(gw)
+  # subtracting half the kernel width
+  |> Nx.subtract(Nx.divide(Nx.subtract(gw, 1), 2)) 
+  |> Nx.as_type({:s,8}) 
+
+# and an y offset
+offset_y = sample_index 
+  |> Nx.subtract(offset_x) 
+  |> Nx.divide(gw) 
+  # subtracting half the kernel height
+  |> Nx.subtract(Nx.divide(Nx.subtract(gh, 1), 2)) 
+  |> Nx.as_type({:s,8})
+
+# Generate x and y indices into our image and offset each of them
+# by one our generated offset values
+# (we generated exactly as many x and y offsets as there are pixels in our original image)
+sx = Nx.iota({h, w}, axis: 0) |> Nx.add(Nx.reshape(offset_x, {h, w})) |> Nx.remainder(w) |> Nx.add(w) |>Nx.remainder(w) 
+sy = Nx.iota({h, w}, axis: 1) |> Nx.add(Nx.reshape(offset_y, {h, w})) |> Nx.remainder(h) |> Nx.add(h) |>Nx.remainder(h) 
+# convert x and y coordinates into a flat coordinate
+sidx = sx |> Nx.multiply(w) |> Nx.add(sy)
+
+girl
+  |> Nx.reshape({h * w, 1})
+  |> Nx.take(sidx)
+  |> Nx.reshape({h, w, 1})
+end
+# Stack all results together to show them at once
+|> Nx.stack()
+|> Output.stack(titel: "Image Blurred via 1SSP Convolution with differently sized Gaussian kernels")
+
 ```
