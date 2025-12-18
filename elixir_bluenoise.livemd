@@ -7,7 +7,7 @@ Mix.install([
   {:nx, "~> 0.10.0"},
   {:kino, "~> 0.18.0"},
   {:image, "~> 0.62.1"},
-  {:kino_zoetrope, "~> 0.4.0"}
+  {:kino_zoetrope, "~> 0.5.0"}
 ])
 
 Kino.nothing()
@@ -263,7 +263,7 @@ swaps = Stream.unfold({{nil, nil}, placed_pixels}, fn {prev_swap, placed} ->
 
     # pass the updated image to the next iteration
     # and carry some debug information along
-    {{{densest, voidest, blurred}, updated}, {{densest,voidest}, updated}}  
+    {{{densest, voidest, blurred}, placed}, {{densest,voidest}, updated}}  
   else
     # stop iteration
     nil
@@ -304,7 +304,33 @@ Kino.nothing()
   normalize: true,
   vmin: 0,
   vmax: 1,
-  labels: ["Placed Pixels", "Density"]
+  labels: ["Placed Pixels", "Density"],
+  markers: [
+    %{
+      attrs: %{
+        "stroke" =>  "red",
+        "stroke-width" => 2,
+        "fill" => "none",
+        "opacity" => 1,
+      },
+      for: [1],
+      points: swaps |> Enum.map(fn {{densest, _, _}, _} -> 
+           {densest |> rem(size), densest |> div(size)}
+      end)
+    },
+    %{
+      attrs: %{
+        "stroke" =>  "lime",
+        "stroke-width" => 2,
+        "fill" => "none",
+        "opacity" => 1,
+      },
+      for: [1],
+      points: swaps |> Enum.map(fn {{_, voidest, _}, _} -> 
+           {voidest |> rem(size), voidest |> div(size)}
+      end)
+    }
+  ]
 )
 
 
@@ -362,7 +388,7 @@ empty_ranks = Nx.broadcast(0, Nx.shape(initial_white_noise)) |> Nx.flatten()
 # This gives us unique increasing pixel values with at least some spatial distance to each other
 # in the resulting image
 # We repeat this count_placed times since this is the number of white pixels we are able to pick and remove
-{new_ranks, new_not_ranked, rank_debug_trace} = for rank <- count_placed..1//-1, reduce: {empty_ranks, not_ranked, [{empty_ranks, not_ranked}]} do
+{new_ranks, new_not_ranked, rank_debug_trace} = for rank <- count_placed..1//-1, reduce: {empty_ranks, not_ranked, []} do
   {ranks, not_ranked, debug_trace} ->
     # Blur the image of white pixels to estimate the density
     blurred = not_ranked
@@ -374,19 +400,20 @@ empty_ranks = Nx.broadcast(0, Nx.shape(initial_white_noise)) |> Nx.flatten()
     |> Nx.flatten() 
 
     # find highest density (that has no rank assigned yet)
-    densest = Nx.multiply(blurred, not_ranked) |> Nx.argmax()
-    |> Nx.new_axis(0)|> Nx.new_axis(0)
+    densest = Nx.multiply(blurred, not_ranked) |> Nx.argmax(tie_break: :low)
+    
+    densest_indest = densest  |> Nx.new_axis(0) |> Nx.new_axis(0)
 
     # remove the pixel at the highest density location
     new_not_ranked = not_ranked
-    |> Nx.indexed_put(densest, Nx.tensor([0.0]))
+    |> Nx.indexed_put(densest_indest, Nx.tensor([0.0]))
 
     # insert increaing counter value (rank) at the same location in the new blank image
     new_ranks = ranks
-    |> Nx.indexed_put(densest, Nx.tensor([rank]))
+    |> Nx.indexed_put(densest_indest, Nx.tensor([rank]))
 
     # continue with updated images until no white pixels are left to remove
-    {new_ranks, new_not_ranked, [{new_ranks, new_not_ranked}|debug_trace]}
+    {new_ranks, new_not_ranked, [{ranks, not_ranked, blurred, Nx.to_number(densest)}|debug_trace]}
 end
 
 Kino.nothing()
@@ -397,14 +424,21 @@ Kino.nothing()
 ```elixir
 [
   rank_debug_trace
-|> Enum.map(fn {_, placed}  -> 
+|> Enum.map(fn {_, placed, _,_}  -> 
   placed |> Nx.reshape({size,size})
 end)
 |> Enum.reverse()
 |> Nx.concatenate()
 |> Nx.reshape({:auto,size,size,1}),
   rank_debug_trace
-|> Enum.map(fn {ranks, _}  -> 
+|> Enum.map(fn {_, _, blurred,_}  -> 
+  blurred |> Nx.reshape({size,size})
+end)
+|> Enum.reverse()
+|> Nx.concatenate()
+|> Nx.reshape({:auto,size,size,1}),
+  rank_debug_trace
+|> Enum.map(fn {ranks, _, _,_}  -> 
   ranks  |> Nx.reshape({size,size})
   end)
 |> Enum.reverse()
@@ -413,7 +447,21 @@ end)
 ]
 |> KinoZoetrope.TensorStack.new(
   titel: "Unlabeled pixel (left) and Labeled Pixels (right)", 
-  labels: ["Unranked Pixels", "Ranks"]
+  labels: ["Unranked Pixels", "Ranks"],
+  markers: [
+    %{
+      attrs: %{
+        "stroke" =>  "magenta",
+        "stroke-width" => 2,
+        "fill" => "none",
+        "opacity" => 1,
+      },
+      for: [0,1,2],
+      points: rank_debug_trace|> Enum.reverse() |> Enum.map(fn {_,_, _, densest} -> 
+           {densest |> rem(size), densest |> div(size)}
+      end)
+    },
+  ]
 )
 ```
 
@@ -450,18 +498,19 @@ new_ranks
 
     # Pick the location of lowest density (that has now pixel placed yet)
     voidest = Nx.add(blurred, placed) |> Nx.argmin()
-    |> Nx.new_axis(0)|> Nx.new_axis(0)
+    
+    voidest_indext = voidest |> Nx.new_axis(0)|> Nx.new_axis(0)
 
     # Add the pixel to the collection of placed pixels by setting it to 1 (white)
     updated_placed = placed
-    |> Nx.indexed_put(voidest, Nx.tensor([1.0]))
+    |> Nx.indexed_put(voidest_indext, Nx.tensor([1.0]))
 
     # Assign a new rank value at this location
     updated_ranks = ranks
-    |> Nx.indexed_put(voidest, Nx.tensor([count_placed + rank]))
+    |> Nx.indexed_put(voidest_indext, Nx.tensor([count_placed + rank]))
 
     # continue interation with updated ranks and placed pixels
-    {updated_ranks, updated_placed, [{voidest, blurred, ranks, placed} | debug_steps]}
+    {updated_ranks, updated_placed, [{Nx.to_number(voidest), blurred, ranks, placed} | debug_steps]}
 end
 
 Kino.nothing()
@@ -503,7 +552,20 @@ debug_trace
 |> KinoZoetrope.TensorStack.new(
   titel: "Placed Pixels (left), Density estimation (center) and Pixel labels (right)", 
   labels: ["Already Ranked Pixels", "Density Estimation", "Ranks"],
-  normalize: false)
+  markers: [
+    %{
+      attrs: %{
+        "stroke" =>  "magenta",
+        "stroke-width" => 2,
+        "fill" => "none",
+        "opacity" => 1,
+      },
+      for: [0,1,2],
+      points: debug_trace|> Enum.reverse() |> Enum.map(fn {voidest, _, _, _} -> 
+           {voidest |> rem(size), voidest |> div(size)}
+      end)
+    },
+  ])
 ```
 
 ## Final Results
