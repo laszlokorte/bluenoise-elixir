@@ -7,7 +7,7 @@ Mix.install([
   {:nx, "~> 0.10.0"},
   {:kino, "~> 0.18.0"},
   {:image, "~> 0.62.1"},
-  {:kino_zoetrope, "~> 0.3.0"}
+  {:kino_zoetrope, "~> 0.4.0"}
 ])
 
 Kino.nothing()
@@ -398,14 +398,14 @@ Kino.nothing()
 [
   rank_debug_trace
 |> Enum.map(fn {_, placed}  -> 
-  placed |> Nx.reshape({size,size})|> Nx.as_type(:f32)|> Nx.multiply(255) 
+  placed |> Nx.reshape({size,size})
 end)
 |> Enum.reverse()
 |> Nx.concatenate()
 |> Nx.reshape({:auto,size,size,1}),
   rank_debug_trace
 |> Enum.map(fn {ranks, _}  -> 
-  ranks  |> Nx.reshape({size,size}) |> Nx.as_type(:f32)|> Nx.multiply(255)
+  ranks  |> Nx.reshape({size,size})
   end)
 |> Enum.reverse()
 |> Nx.concatenate()
@@ -413,7 +413,6 @@ end)
 ]
 |> KinoZoetrope.TensorStack.new(
   titel: "Unlabeled pixel (left) and Labeled Pixels (right)", 
-  normalize: false,
   labels: ["Unranked Pixels", "Ranks"]
 )
 ```
@@ -592,20 +591,25 @@ gauss_kernel
 
 girl = bin |> Nx.from_binary(:u8) 
 |> Nx.reshape({64, 64, 4}) 
+# Discard alpha Channel
+|> Nx.slice_along_axis(0, 3, axis: 2)
 |> Nx.mean(axes: [2])
+|> Nx.as_type(:u8)
 |> Nx.reshape({64, 64, 1})
 
 girl 
 |> Nx.reshape({64, 64, 1})
 |> KinoZoetrope.TensorStack.new(
-  titel: "Example Image (The Girl with Perl skills)"
+  titel: "Example Image (The Girl with Perl skills)",
+  vmin: 0,
+  vmax: 255
 )
 ```
 
 ```elixir
 # In preparation for later sampling we interpret the 
 # gaussian kernel as probablity density and calculate
-# the cummulative distribution via 1D prefix sum (Nx.cumulative_sum)
+# the cumulative distribution via 1D prefix sum (Nx.cumulative_sum)
 {gw, gh} = Nx.shape(gauss_kernel)
 cumulative_gaus = gauss_kernel |> Nx.flatten() |> Nx.cumulative_sum()
 
@@ -616,7 +620,9 @@ cumulative_gaus
 # we just need to use it for sampling a single coord via a single
 # random value
 |> Nx.reshape({gw, gh, 1})
-|> KinoZoetrope.TensorStack.new(titel: "1D cumulated Gauss kernel")
+|> KinoZoetrope.TensorStack.new(
+  titel: "1D cumulated Gauss kernel"
+)
 ```
 
 ```elixir
@@ -643,7 +649,7 @@ noise_values = noise_source
 |> Nx.take(idx)
 |> Nx.reshape({h, w, 1})
 
-# For each sampled value select an index in the cummulative distribution
+# For each sampled value select an index in the cumulative distribution
 # via Inverse transform sampling
 # Specifically: select the first index in the cumdist where the element is greater than our
 # random sample value
@@ -693,7 +699,11 @@ result = girl
 # Show the result
 result
 |> Nx.reshape({h, w, 1})
-|> KinoZoetrope.TensorStack.new(titel: "Image Blurred via 1SSP Convolution with Blue Noise as Random Source")
+|> KinoZoetrope.TensorStack.new(
+  titel: "Image Blurred via 1SSP Convolution with Blue Noise as Random Source",
+  vmin: 0,
+  vmax: 255
+)
 
 ```
 
@@ -704,12 +714,15 @@ sidx
 |> Nx.reshape({h * w, 1})
 |> Nx.take(sidx)
 |> Nx.reshape({h, w, 1})
-|> KinoZoetrope.TensorStack.new(titel: "The coordinate values")
+|> KinoZoetrope.TensorStack.new(titel: "The coordinate values",
+  vmin: 0,
+  vmax: w*h
+)
 ```
 
 ```elixir
 # Same as above but with multiple different Gauss kernels in comparious
-kernel_sizes = [0.0, 0.1, 0.3, 0.5, 0.8, 1.0, 1.2, 1.5, 2.0,2.2, 2.5,3.0]
+kernel_sizes = [0.1, 0.3, 0.5, 0.8, 1.0, 1.2, 1.5, 2.0,2.2, 2.5,3.0]
 
 for stddev <- kernel_sizes do 
   gauss_kernel = Gauss.kernel(7, max(stddev, 0.01))
@@ -738,7 +751,7 @@ for stddev <- kernel_sizes do
   |> Nx.take(idx)
   |> Nx.reshape({h, w, 1})
   
-  # For each sampled value select an index in the cummulative distribution
+  # For each sampled value select an index in the cumulative distribution
   # via Inverse transform sampling
   # Specifically: select the first index in the cumdist where the element is greater than our
   # random sample value
@@ -784,8 +797,16 @@ for stddev <- kernel_sizes do
     |> Nx.take(sidx)
     |> Nx.reshape({h, w, 1})
 end
+# Prepend original image
+|> then(&[girl|&1])
 # Stack all results together to show them at once
 |> Nx.stack()
-|> KinoZoetrope.TensorStack.new(titel: "Image Blurred via 1SSP Convolution with differently sized Gaussian kernels")
+|> then(&[girl,&1])
+|> KinoZoetrope.TensorStack.new(
+  titel: "Image Blurred via 1SSP Convolution with differently sized Gaussian kernels",
+  labels: ["Original", "Blurred"],
+  vmin: 0,
+  vmax: 255
+)
 
 ```
