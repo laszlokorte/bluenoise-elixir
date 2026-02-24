@@ -100,6 +100,8 @@ defmodule Gauss do
     )
     |> then(&(Nx.divide(&1, Nx.sum(&1))))
   end
+
+  def kernel(sigma), do: kernel(2 * ceil(3 * sigma) + 1, sigma)
 end
 
 Gauss.kernel(32, 3) 
@@ -570,6 +572,108 @@ debug_trace
 
 ## Final Results
 
+For quantitative and qualitive analysis of the results we define some helpers functions for plotting the 2d Discrete Fourier Transform of the Noise.
+
+```elixir
+defmodule FFTHelper do 
+  @moduledoc """
+    Some signal processing helper functions to plot the spectrum of a 2D image tensor.
+  """
+
+  
+  @doc """
+    Rearanges the the result of a fast fourier transform to have the lowest
+    frequency bin in its center
+  """
+  def fftshift2(x) do
+    {h, w} = Nx.shape(x)
+
+    # Shift rows
+    mid_h = div(h, 2)
+    top = Nx.slice(x, [0, 0], [mid_h, w])
+    bottom = Nx.slice(x, [mid_h, 0], [h - mid_h, w])
+    x_shifted = Nx.concatenate([bottom, top], axis: 0)
+  
+    # Shift columns
+    mid_w = div(w, 2)
+    left = Nx.slice(x_shifted, [0, 0], [h, mid_w])
+    right = Nx.slice(x_shifted, [0, mid_w], [h, w - mid_w])
+    Nx.concatenate([right, left], axis: 1)
+  end
+
+  @doc """
+    Takes a Tensor and recenters its values range.
+  """
+  def recenter(tensor, args \\ []) do 
+    min = Nx.reduce_min(tensor, axes: Keyword.get(args, :axes, nil))
+    max = Nx.reduce_max(tensor, axes: Keyword.get(args, :axes, nil))
+    Nx.subtract(tensor, Nx.divide(Nx.add(min, max), 2.0))
+  end
+
+  def recenter_mean(tensor) do 
+    Nx.subtract(tensor, safe_mean(tensor))
+  end
+  
+  def recenter_median(tensor) do 
+    Nx.subtract(tensor, Nx.median(tensor))
+  end
+
+  def safe_mean(x, opts \\ []) do
+    finite = Nx.logical_not(Nx.logical_or(Nx.is_infinity(x), Nx.is_nan(x)))
+    cleaned = Nx.select(finite, x, 0.0)
+  
+    sum = Nx.sum(cleaned, opts)
+    count = Nx.sum(Nx.as_type(finite, Nx.type(sum)), opts)
+  
+    Nx.divide(sum, count)
+  end
+
+  @doc """
+    Takes an image as 2D Nx.Tensor and returns a Kino Plot of the 2D spectrum (DFT) 
+  """
+  def plot_spectrum(image, args \\ []) do 
+    # we expect the image to be square
+    {size, size} = case Nx.shape(image) do
+      {s,s} -> {s,s}
+      {s,s,1} -> {s,s}
+    end
+
+    # optionally map the spectrum to the logarithmic scale
+    logscale = Keyword.get(args, :log, false)
+    rescale = &if(logscale, do: Nx.multiply(10, Nx.log10(&1)), else: &1)
+
+    # Nx.log may return NaN or Infinity, replace those entries with 1
+    catch_nans = &Nx.select(Nx.logical_or(Nx.is_nan(&1), Nx.is_infinity(&1)), safe_mean(&1), &1)
+    
+    image
+    |> Nx.reshape({size, size})
+    |> Nx.as_type(:f32) # force pixels to be f32
+    |> Nx.fft2() # calculate 2d DFT
+    |> FFTHelper.fftshift2() # reorder frequency bins for better readability
+    |> then(&[
+      &1 # extract magnitude spectrum
+      |> Nx.abs()
+      |> then(rescale)
+      |> then(catch_nans)
+      |> Nx.reshape({size,size, 1}),
+      &1 # extract phase spectrum
+      |> Nx.phase()
+      |> Nx.reshape({size,size, 1})
+    ])
+    # Plot spectrum as two images
+    |> KinoZoetrope.TensorStack.new(
+      titel: Keyword.get(args, :titel, "Spectrum"), 
+      labels: [
+        if(logscale, do: "Log Magnitude", else: "Magnitude"),
+        "Phase Spectrum"
+      ]
+    )
+  end
+end
+
+Kino.nothing()
+```
+
 ```elixir
 # Now look at the final result:
 # we have a 32x32 image (1024 pixels in total) with 1024 different pixel values
@@ -577,6 +681,7 @@ debug_trace
 # Each pixel has a value (rank) that is very different from all its neighbour
 # due to the order in which we assigned the values
 final_ranks
+|> then(&Nx.subtract(&1, Nx.mean(&1)))
 |> Nx.reshape({size,size, 1})
 # for display purposes we need to scale the pixels into a range 0-255
 |> Nx.divide(Nx.reduce_max(final_ranks))
@@ -584,11 +689,27 @@ final_ranks
 ```
 
 ```elixir
-# Compare the result to our initial uniform random distribution of pixels: 
-# In the intial distribution you can see light and dark clusters
+# Plot the spectrum of the generated noise.
+# We expect low (dark) values for the low frequencies and high (bright) values in
+# the high frequency bins. 
+# This corresponds to blue light having the majority of its energy in 
+# shorter wave lengths (high frequencies) and less energy in long wavelengths (low frequency)
+final_ranks
+|> Nx.reshape({size,size})
+# Spectrum looks cleaner if there is no 0-frequency, ie. if the mean is zero
+|> FFTHelper.recenter()
+|> FFTHelper.plot_spectrum(titel: "Blue Noise Spectrum", log: true)
+```
+
+```elixir
+# Now look at the spectrum of the white noise image in comparison
+# The intesity distribution across all frequency bins is equally strong
+# This corresponds to white light containing all visible frequencies in equal parts
 initial_white_noise
-|> Nx.reshape({size,size, 1})
-|> KinoZoetrope.TensorStack.new(titel: "Original white noise with visible clusters")
+|> then(&Nx.subtract(&1, Nx.mean(&1)))
+|> FFTHelper.recenter()
+|> Nx.reshape({size,size})
+|> FFTHelper.plot_spectrum(titel: "White Noise Spectrum", log: true)
 ```
 
 <!-- livebook:{"reevaluate_automatically":true} -->
@@ -599,10 +720,12 @@ initial_white_noise
 # Try change the threshold to increase the number of white pixels and see how the spacing keeps nice
 threshold = 16
 
-final_ranks
+thresholded_ranks = final_ranks
 |> Nx.divide(Nx.reduce_max(final_ranks))
 |> Nx.multiply(255)
 |> Nx.less(threshold)
+
+thresholded_ranks
 |> Nx.reshape({size,size, 1})
 |> KinoZoetrope.TensorStack.new(
   titel: "Thresholded Blue noise yields uniformly spaced white pixels"
@@ -610,17 +733,41 @@ final_ranks
 ```
 
 ```elixir
+# Now look at the spectrogram for the thresholded image.
+# You can still see the dark region in the center
+# showing the low frequencies still having less energy.
+# This is a characteristic of high quality blue noise that even
+# after transformations like thresholding the spectral properties are
+# preserved
+thresholded_ranks
+|> FFTHelper.recenter_mean()
+|> Nx.reshape({size,size})
+|> FFTHelper.plot_spectrum(titel: "Spectrum of Thresholded Blue Noise", log: true)
+```
+
+```elixir
 # Again contrast this with the thresholded original uniform noice distribution:
 # the clustering is very obvious
 threshold = 16
 
-initial_white_noise
+thresholded_white_noise = initial_white_noise
 |> Nx.multiply(255)
 |> Nx.less(16)
+
+thresholded_white_noise
 |> Nx.reshape({size,size, 1})
 |> KinoZoetrope.TensorStack.new(
   titel: "Thresholded White Noise yields some dense and sparse spots"
 )
+```
+
+```elixir
+# The spectrum of the thresholded white noise
+# is still uniformly distributed.
+thresholded_white_noise
+|> FFTHelper.recenter_mean()
+|> Nx.reshape({size,size})
+|> FFTHelper.plot_spectrum(titel: "Spectrum of Thresholded White Noise", log: true)
 ```
 
 ## Example Application
@@ -693,110 +840,12 @@ cumulative_gaus
 # ... and the input image 
 {h, w, _} = Nx.shape(girl)
 
-# convert our generated blue noise (final_ranks) into square shape and into range 0..1
-noise_source = final_ranks 
-  |> Nx.reshape({size,size, 1}) 
-  |> then(&Nx.divide(&1, Nx.reduce_max(&1)))
-{n_h, n_w} = {size,size}
-
-# Generate array of size {h,w} containing indicies into the noise source {n_h, n_w}
-x = Nx.iota({h, w}, axis: 0) |> Nx.remainder(n_w) # x coord
-y = Nx.iota({h, w}, axis: 1) |> Nx.remainder(n_h) # y coord
-# flatten index
-idx = x |> Nx.multiply(n_w) |> Nx.add(y)
-
-# sample the noise texture (our generated blue nosie) at each index position
-noise_values = noise_source
-|> Nx.reshape({n_h * n_w, 1})
-|> Nx.take(idx)
-|> Nx.reshape({h, w, 1})
-
-# For each sampled value select an index in the cumulative distribution
-# via Inverse transform sampling
-# Specifically: select the first index in the cumdist where the element is greater than our
-# random sample value
-sample_index = Nx.greater_equal(
-  Nx.reshape(noise_values, {:auto, 1}), 
-  Nx.reshape(cumulative_gaus, {1, :auto})
-) |> Nx.argmin(axis: 1)
-
-# Convert the sampled index from the kernel
-# into and x offset
-offset_x = sample_index 
-  |> Nx.remainder(gw)
-  # subtracting half the kernel width
-  |> Nx.subtract(Nx.divide(Nx.subtract(gw, 1), 2)) 
-  |> Nx.as_type({:s,8}) 
-
-# and an y offset
-offset_y = sample_index 
-  |> Nx.subtract(offset_x) 
-  |> Nx.divide(gw) 
-  # subtracting half the kernel height
-  |> Nx.subtract(Nx.divide(Nx.subtract(gh, 1), 2)) 
-  |> Nx.as_type({:s,8})
-
-# Generate x and y indices into our image and offset each of them
-# by one our generated offset values
-# (we generated exactly as many x and y offsets as there are pixels in our original image)
-sx = Nx.iota({h, w}, axis: 0) 
-  |> Nx.add(Nx.reshape(offset_x, {h, w})) 
-  |> Nx.remainder(w) 
-  |> Nx.add(w) 
-  |> Nx.remainder(w) 
-sy = Nx.iota({h, w}, axis: 1) 
-  |> Nx.add(Nx.reshape(offset_y, {h, w})) 
-  |> Nx.remainder(h) 
-  |> Nx.add(h) 
-  |>Nx.remainder(h) 
-
-# convert x and y coordinates into a flat coordinate
-sidx = sx |> Nx.multiply(w) |> Nx.add(sy)
-
-result = girl
-|> Nx.reshape({h * w, 1})
-|> Nx.take(sidx)
-|> Nx.reshape({h, w, 1})
-
-# Show the result
-result
-|> Nx.reshape({h, w, 1})
-|> KinoZoetrope.TensorStack.new(
-  titel: "Image Blurred via 1SSP Convolution with Blue Noise as Random Source",
-  vmin: 0,
-  vmax: 255
-)
-
-```
-
-```elixir
-# Instead of actually sampling our input image we can
-# also plot the sampling coordinates themself
-sidx
-|> Nx.reshape({h * w, 1})
-|> Nx.take(sidx)
-|> Nx.reshape({h, w, 1})
-|> KinoZoetrope.TensorStack.new(titel: "The coordinate values",
-  vmin: 0,
-  vmax: w*h
-)
-```
-
-```elixir
-# Same as above but with multiple different Gauss kernels in comparious
-kernel_sizes = [0.1, 0.3, 0.5, 0.8, 1.0, 1.2, 1.5, 2.0,2.2, 2.5,3.0]
-
-for stddev <- kernel_sizes do 
-  gauss_kernel = Gauss.kernel(7, max(stddev, 0.01))
-  cumulative_gaus = gauss_kernel |> Nx.flatten() |> Nx.cumulative_sum()
+# use both our generated blue noise (final_ranks) 
+# and white noise as comparison
+sspp_result = [final_ranks, initial_white_noise] |> Enum.map(fn noise_source -> 
   
-  # Retreive dimensions of the gauss kernel...
-  {gw,gh} = Nx.shape(gauss_kernel)
-  # ... and the input image 
-  {h, w, _} = Nx.shape(girl)
-  
-  # convert our generated blue noise (final_ranks) into square shape and into range 0..1
-  noise_source = final_ranks 
+  # convert noise source into square shape and into range 0..1
+  noise_source = noise_source 
     |> Nx.reshape({size,size, 1}) 
     |> then(&Nx.divide(&1, Nx.reduce_max(&1)))
   {n_h, n_w} = {size,size}
@@ -850,23 +899,144 @@ for stddev <- kernel_sizes do
     |> Nx.add(Nx.reshape(offset_y, {h, w})) 
     |> Nx.remainder(h) 
     |> Nx.add(h) 
-    |> Nx.remainder(h) 
+    |>Nx.remainder(h) 
+  
   # convert x and y coordinates into a flat coordinate
   sidx = sx |> Nx.multiply(w) |> Nx.add(sy)
   
-  girl
-    |> Nx.reshape({h * w, 1})
-    |> Nx.take(sidx)
+  result = girl
+  |> Nx.reshape({h * w, 1})
+  |> Nx.take(sidx)
+  |> Nx.reshape({h, w, 1})
+  
+  # Show the result
+  {
+    result |> Nx.reshape({h, w, 1}),
+    sidx
+  }
+end)
+
+sspp_result
+|> Enum.map(&elem(&1, 0))
+|> KinoZoetrope.TensorStack.new(
+  titel: "Image Blurred via 1SSP Convolution",
+  labels: ["with Blue Noise as Random Source", "with White Noise as Random Source"],
+  vmin: 0,
+  vmax: 255
+)
+
+```
+
+```elixir
+# Instead of actually sampling our input image we can
+# also plot the sampling coordinates themself
+sspp_result
+|> Enum.map(&elem(&1, 1))
+|> Enum.map(fn sidx -> 
+  sidx
+  |> Nx.reshape({h * w, 1})
+  |> Nx.take(sidx)
+  |> Nx.reshape({h, w, 1})
+end)
+|> KinoZoetrope.TensorStack.new(titel: "The coordinate values",
+  labels: ["Blue Nosie", "White Noise"],
+  vmin: 0,
+  vmax: w*h
+)
+```
+
+```elixir
+# Same as above but with multiple different Gauss kernels in comparious
+kernel_sizes = [0.1, 0.3, 0.5, 0.8, 1.0, 1.2, 1.5, 2.0,2.2, 2.5,3.0,4.0,5.0]
+
+# Try both our generated blue noise and the 
+# initial white noise as noise sources in comparison
+for noise_source <- [final_ranks, initial_white_noise] do
+  for stddev <- kernel_sizes do 
+  
+    # 2 * ceil(3 * stddev) + 1 is a good size for a gaussian kernel of given stddev
+    gauss_kernel = Gauss.kernel(2 * ceil(3 * stddev) + 1, max(stddev, 0.01))
+    cumulative_gaus = gauss_kernel |> Nx.flatten() |> Nx.cumulative_sum()
+    
+    # Retreive dimensions of the gauss kernel...
+    {gw,gh} = Nx.shape(gauss_kernel)
+    # ... and the input image 
+    {h, w, _} = Nx.shape(girl)
+    
+    # convert our generated blue noise (final_ranks) into square shape and into range 0..1
+    noise_source = noise_source 
+      |> Nx.reshape({size,size, 1}) 
+      |> then(&Nx.divide(&1, Nx.reduce_max(&1)))
+    {n_h, n_w} = {size,size}
+    
+    # Generate array of size {h,w} containing indicies into the noise source {n_h, n_w}
+    x = Nx.iota({h, w}, axis: 0) |> Nx.remainder(n_w) # x coord
+    y = Nx.iota({h, w}, axis: 1) |> Nx.remainder(n_h) # y coord
+    # flatten index
+    idx = x |> Nx.multiply(n_w) |> Nx.add(y)
+    
+    # sample the noise texture (our generated blue nosie) at each index position
+    noise_values = noise_source
+    |> Nx.reshape({n_h * n_w, 1})
+    |> Nx.take(idx)
     |> Nx.reshape({h, w, 1})
+    
+    # For each sampled value select an index in the cumulative distribution
+    # via Inverse transform sampling
+    # Specifically: select the first index in the cumdist where the element is greater than our
+    # random sample value
+    sample_index = Nx.greater_equal(
+      Nx.reshape(noise_values, {:auto, 1}), 
+      Nx.reshape(cumulative_gaus, {1, :auto})
+    ) |> Nx.argmin(axis: 1)
+    
+    # Convert the sampled index from the kernel
+    # into and x offset
+    offset_x = sample_index 
+      |> Nx.remainder(gw)
+      # subtracting half the kernel width
+      |> Nx.subtract(Nx.divide(Nx.subtract(gw, 1), 2)) 
+      |> Nx.as_type({:s,8}) 
+    
+    # and an y offset
+    offset_y = sample_index 
+      |> Nx.subtract(offset_x) 
+      |> Nx.divide(gw) 
+      # subtracting half the kernel height
+      |> Nx.subtract(Nx.divide(Nx.subtract(gh, 1), 2)) 
+      |> Nx.as_type({:s,8})
+    
+    # Generate x and y indices into our image and offset each of them
+    # by one our generated offset values
+    # (we generated exactly as many x and y offsets as there are pixels in our original image)
+    sx = Nx.iota({h, w}, axis: 0) 
+      |> Nx.add(Nx.reshape(offset_x, {h, w})) 
+      |> Nx.remainder(w) 
+      |> Nx.add(w) 
+      |> Nx.remainder(w) 
+    sy = Nx.iota({h, w}, axis: 1) 
+      |> Nx.add(Nx.reshape(offset_y, {h, w})) 
+      |> Nx.remainder(h) 
+      |> Nx.add(h) 
+      |> Nx.remainder(h) 
+    # convert x and y coordinates into a flat coordinate
+    sidx = sx |> Nx.multiply(w) |> Nx.add(sy)
+    
+    girl
+      |> Nx.reshape({h * w, 1})
+      |> Nx.take(sidx)
+      |> Nx.reshape({h, w, 1})
+          
+  end
+  # Prepend original image
+  |> then(&[girl|&1])
+  # Stack all results together to show them at once
+  |> Nx.stack()
 end
-# Prepend original image
 |> then(&[girl|&1])
-# Stack all results together to show them at once
-|> Nx.stack()
-|> then(&[girl,&1])
 |> KinoZoetrope.TensorStack.new(
   titel: "Image Blurred via 1SSP Convolution with differently sized Gaussian kernels",
-  labels: ["Original", "Blurred"],
+  labels: ["Original", "Blurred With Blue Noise", "Blurred With White Noise"],
   vmin: 0,
   vmax: 255
 )
