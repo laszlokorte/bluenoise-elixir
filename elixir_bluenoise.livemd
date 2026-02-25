@@ -7,7 +7,7 @@ Mix.install([
   {:nx, "~> 0.10.0"},
   {:kino, "~> 0.18.0"},
   {:image, "~> 0.62.1"},
-  {:kino_zoetrope, "~> 0.5.0"}
+  {:kino_zoetrope, "~> 0.9.0"}
 ])
 
 Kino.nothing()
@@ -522,34 +522,34 @@ Kino.nothing()
 
 ```elixir
 [
-debug_trace
-|> Enum.map(fn {_voidest, _blurred, _ranks, placed}  -> 
-  placed |> Nx.reshape({size,size})|> Nx.as_type(:f32)|> Nx.multiply(255) 
-end)
-  |>Enum.reverse()
-|> Nx.concatenate()
-|> Nx.reshape({:auto,size,size,1}),
-
-debug_trace
-|> Enum.map(fn {_voidest, blurred, _ranks, _placed}  -> 
-  b = blurred |> Nx.reshape({size,size}) |> Nx.as_type(:f32)
-  min = Nx.reduce_min(b)
-  max = Nx.reduce_max(b)
-  range = Nx.subtract(max, min) |> Nx.max(Nx.tensor(1.0e-12))
-  b |> Nx.subtract(min) |> Nx.divide(range)  |> Nx.divide(2)  |> Nx.add(0.5) 
-   |> Nx.multiply(255) 
-  end)
-  |>Enum.reverse()
-|> Nx.concatenate()
-|> Nx.reshape({:auto,size,size,1}),
-
   debug_trace
-|> Enum.map(fn {_voidest, _blurred, ranks, _placed}  -> 
-  ranks  |> Nx.reshape({size,size})
+  |> Enum.map(fn {_voidest, _blurred, _ranks, placed}  -> 
+    placed |> Nx.reshape({size,size})|> Nx.as_type(:f32)|> Nx.multiply(255) 
   end)
-  |>Enum.reverse()
-|> Nx.concatenate()
-|> Nx.reshape({:auto,size,size,1})
+    |>Enum.reverse()
+  |> Nx.concatenate()
+  |> Nx.reshape({:auto,size,size,1}),
+  
+  debug_trace
+  |> Enum.map(fn {_voidest, blurred, _ranks, _placed}  -> 
+    b = blurred |> Nx.reshape({size,size}) |> Nx.as_type(:f32)
+    min = Nx.reduce_min(b)
+    max = Nx.reduce_max(b)
+    range = Nx.subtract(max, min) |> Nx.max(Nx.tensor(1.0e-12))
+    b |> Nx.subtract(min) |> Nx.divide(range)  |> Nx.divide(2)  |> Nx.add(0.5) 
+     |> Nx.multiply(255) 
+    end)
+  |> Enum.reverse()
+  |> Nx.concatenate()
+  |> Nx.reshape({:auto,size,size,1}),
+  
+    debug_trace
+  |> Enum.map(fn {_voidest, _blurred, ranks, _placed}  -> 
+    ranks  |> Nx.reshape({size,size})
+    end)
+    |>Enum.reverse()
+  |> Nx.concatenate()
+  |> Nx.reshape({:auto,size,size,1})
 ]
 |> KinoZoetrope.TensorStack.new(
   titel: "Placed Pixels (left), Density estimation (center) and Pixel labels (right)", 
@@ -681,6 +681,7 @@ defmodule FFTHelper do
     # Plot spectrum as two images
     |> KinoZoetrope.TensorStack.new(
       titel: Keyword.get(args, :titel, "Spectrum"), 
+      cmaps: [nil, "hsv"],
       labels: [
         if(logscale, do: "Log Magnitude", else: "Magnitude"),
         "Phase Spectrum"
@@ -938,7 +939,7 @@ sspp_result
 |> Enum.map(&elem(&1, 0))
 |> KinoZoetrope.TensorStack.new(
   titel: "Image Blurred via 1SSP Convolution",
-  labels: ["with Blue Noise as Random Source", "with White Noise as Random Source"],
+  labels: ["with Blue Noise as Random Source", "White Noise as Random Source"],
   vmin: 0,
   vmax: 255
 )
@@ -948,6 +949,7 @@ sspp_result
 ```elixir
 # Instead of actually sampling our input image we can
 # also plot the sampling coordinates themself
+# This shows the displacement map
 sspp_result
 |> Enum.map(&elem(&1, 1))
 |> Enum.map(fn sidx -> 
@@ -956,7 +958,7 @@ sspp_result
   |> Nx.take(sidx)
   |> Nx.reshape({h, w, 1})
 end)
-|> KinoZoetrope.TensorStack.new(titel: "The coordinate values",
+|> KinoZoetrope.TensorStack.new(titel: "The coordinate values of the displacement map",
   labels: ["Blue Nosie", "White Noise"],
   vmin: 0,
   vmax: w*h
@@ -993,11 +995,11 @@ show_kernels
   gauss_norm = kernel |> FFTHelper.normalize()
   cum_norm = cum |> FFTHelper.normalize()
 
-  Nx.stack([gauss_norm, cum_norm, cum_norm])
+  Nx.stack([gauss_norm, cum_norm])
    |> Nx.reshape({:auto, size, size, 1})
 end)
 |> KinoZoetrope.TensorStack.new(
-  labels: Enum.map(show_kernels, &"sigma=#{Enum.at(kernel_widths, &1)}"),
+  labels: Enum.map(show_kernels, &"σ=#{Enum.at(kernel_widths, &1)}"),
   normalize: true
 )
 ```
@@ -1017,7 +1019,7 @@ Kino.nothing()
 ```elixir
 show_kernels |> Enum.map(&Enum.at(classic_blurs, &1))  |> KinoZoetrope.TensorStack.new(
   titel: "Image Blurred via classic convolution",
-  labels: Enum.map(show_kernels, &"sigma=#{Enum.at(kernel_widths, &1)}"),
+  labels: Enum.map(show_kernels, &"σ=#{Enum.at(kernel_widths, &1)}"),
   vmin: 0,
   vmax: 255
 )
@@ -1119,6 +1121,7 @@ sspp_blurs
     "Original", "Classic Convolution Blur", "SSPP Blur, Blue Noise", "SSPP Blur, White Noise"
   ],
   vmin: 0,
+  cmap: "hsv",
   vmax: 255
 )
 ```
