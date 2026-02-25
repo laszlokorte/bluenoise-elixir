@@ -618,6 +618,24 @@ defmodule FFTHelper do
     Nx.subtract(tensor, Nx.median(tensor))
   end
 
+  def normalize(tensor, args \\ []) do 
+    real_min = Nx.reduce_min(tensor) |> Nx.to_number()
+    real_max = Nx.reduce_max(tensor) |> Nx.to_number()
+    
+    range =
+      Nx.subtract(
+        Keyword.get(args, :vmax, real_max),
+        Keyword.get(args, :vmin, real_min)
+      )
+
+    tensor
+        |> Nx.subtract(Keyword.get(args, :vmin, real_min))
+        |> Nx.divide(range)
+        |> Nx.multiply(255)
+      |> Nx.as_type(:u8)
+
+  end
+
   def safe_mean(x, opts \\ []) do
     finite = Nx.logical_not(Nx.logical_or(Nx.is_infinity(x), Nx.is_nan(x)))
     cleaned = Nx.select(finite, x, 0.0)
@@ -947,19 +965,71 @@ end)
 
 ```elixir
 # Same as above but with multiple different Gauss kernels in comparious
-kernel_sizes = [0.1, 0.3, 0.5, 0.8, 1.0, 1.2, 1.5, 2.0,2.2, 2.5,3.0,4.0,5.0]
+kernel_widths = [0.1, 0.3, 0.5, 0.8, 1.0, 1.2, 1.5, 2.0,2.2, 2.5,3.0,4.0,5.0]
+# 2 * ceil(3 * stddev) + 1 is a good size for a gaussian kernel of given stddev
+kernel_sizes = for stddev <- kernel_widths, do: 2 * ceil(3 * stddev) + 1
 
+kernels = for {stddev, size} <- Enum.zip(kernel_widths, kernel_sizes) do
+  Gauss.kernel(size, max(stddev, 0.01))
+end
+
+cumulative_kernels = for {kernel, size} <- Enum.zip(kernels, kernel_sizes) do  
+  kernel
+    |> Nx.flatten() 
+    |> Nx.as_type(:f32)
+    |> Nx.cumulative_sum() 
+    |> Nx.reshape({size, size})
+end
+
+Kino.nothing()
+```
+
+```elixir
+show_kernels = [0,4,6]
+kernel_params = Enum.zip([kernels, cumulative_kernels, kernel_sizes]) 
+show_kernels 
+|> Enum.map(&Enum.at(kernel_params, &1)) 
+|> Enum.map(fn {kernel, cum, size} ->
+  gauss_norm = kernel |> FFTHelper.normalize()
+  cum_norm = cum |> FFTHelper.normalize()
+
+  Nx.stack([gauss_norm, cum_norm, cum_norm])
+   |> Nx.reshape({:auto, size, size, 1})
+end)
+|> KinoZoetrope.TensorStack.new(
+  labels: Enum.map(show_kernels, &"sigma=#{Enum.at(kernel_widths, &1)}"),
+  normalize: true
+)
+```
+
+```elixir
+{girl_size, girl_size, 1} = Nx.shape(girl)
+classic_blurs = kernels |> Enum.map(fn k -> 
+  Nx.conv(
+    girl |> Nx.reshape({1,1,girl_size, girl_size}), 
+    k |> Nx.new_axis(0) |> Nx.new_axis(0), 
+    padding: :same
+  )
+|> Nx.reshape({girl_size,girl_size, 1}) end)
+Kino.nothing()
+```
+
+```elixir
+show_kernels |> Enum.map(&Enum.at(classic_blurs, &1))  |> KinoZoetrope.TensorStack.new(
+  titel: "Image Blurred via classic convolution",
+  labels: Enum.map(show_kernels, &"sigma=#{Enum.at(kernel_widths, &1)}"),
+  vmin: 0,
+  vmax: 255
+)
+```
+
+```elixir
 # Try both our generated blue noise and the 
 # initial white noise as noise sources in comparison
-for noise_source <- [final_ranks, initial_white_noise] do
-  for stddev <- kernel_sizes do 
-  
-    # 2 * ceil(3 * stddev) + 1 is a good size for a gaussian kernel of given stddev
-    gauss_kernel = Gauss.kernel(2 * ceil(3 * stddev) + 1, max(stddev, 0.01))
-    cumulative_gaus = gauss_kernel |> Nx.flatten() |> Nx.cumulative_sum()
-    
+sspp_blurs = for noise_source <- [final_ranks, initial_white_noise] do
+  for cum_kernel <- cumulative_kernels do    
     # Retreive dimensions of the gauss kernel...
-    {gw,gh} = Nx.shape(gauss_kernel)
+    {gw,gh} = Nx.shape(cum_kernel)
     # ... and the input image 
     {h, w, _} = Nx.shape(girl)
     
@@ -987,7 +1057,7 @@ for noise_source <- [final_ranks, initial_white_noise] do
     # random sample value
     sample_index = Nx.greater_equal(
       Nx.reshape(noise_values, {:auto, 1}), 
-      Nx.reshape(cumulative_gaus, {1, :auto})
+      Nx.reshape(cum_kernel, {1, :auto})
     ) |> Nx.argmin(axis: 1)
     
     # Convert the sampled index from the kernel
@@ -1033,12 +1103,22 @@ for noise_source <- [final_ranks, initial_white_noise] do
   # Stack all results together to show them at once
   |> Nx.stack()
 end
-|> then(&[girl|&1])
+
+Kino.nothing()
+```
+
+```elixir
+# Look at the results 
+sspp_blurs
+# Show both the original image, the classic blur and the SSPP blurs
+# for comparison
+|> then(&[girl,Nx.stack([girl|classic_blurs])|&1])
 |> KinoZoetrope.TensorStack.new(
   titel: "Image Blurred via 1SSP Convolution with differently sized Gaussian kernels",
-  labels: ["Original", "Blurred With Blue Noise", "Blurred With White Noise"],
+  labels: [
+    "Original", "Classic Convolution Blur", "SSPP Blur, Blue Noise", "SSPP Blur, White Noise"
+  ],
   vmin: 0,
   vmax: 255
 )
-
 ```
