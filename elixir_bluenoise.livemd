@@ -7,7 +7,7 @@ Mix.install([
   {:nx, "~> 0.10.0"},
   {:kino, "~> 0.18.0"},
   {:image, "~> 0.62.1"},
-  {:kino_zoetrope, "~> 0.9.0"}
+  {:kino_zoetrope, "~> 0.10.0"}
 ])
 
 Kino.nothing()
@@ -107,7 +107,7 @@ end
 Gauss.kernel(32, 3) 
 |> Nx.reshape({33,33, 1})
 |> then(&Nx.divide(&1, Nx.reduce_max(&1)))
-|> KinoZoetrope.TensorStack.new(titel: "Gaussian Kernel")
+|> KinoZoetrope.TensorStack.new(titel: "Gaussian Kernel", cmap: "viridis")
 ```
 
 ```elixir
@@ -1000,6 +1000,7 @@ show_kernels
 end)
 |> KinoZoetrope.TensorStack.new(
   labels: Enum.map(show_kernels, &"σ=#{Enum.at(kernel_widths, &1)}"),
+  cmap: "viridis",
   normalize: true
 )
 ```
@@ -1121,7 +1122,7 @@ sspp_blurs
     "Original", "Classic Convolution Blur", "SSPP Blur, Blue Noise", "SSPP Blur, White Noise"
   ],
   vmin: 0,
-  cmap: "hsv",
-  vmax: 255
+  vmax: 255,
+  cmap: "hot"
 )
 ```
