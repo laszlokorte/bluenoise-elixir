@@ -5,9 +5,10 @@
 ```elixir
 Mix.install([
   {:nx, "~> 0.11.0"},
-  {:kino, "~> 0.18.0"},
+  {:kino, "~> 0.19.0"},
   {:image, "~> 0.62.1"},
-  {:kino_zoetrope, "~> 0.16.0"}
+  {:kino_zoetrope, "~> 0.20.0"},
+  {:exla, "~> 0.11.0"}
 ])
 
 Kino.nothing()
@@ -81,6 +82,16 @@ Explore the code below…
     *   Assign this pixel the next available intensity (`rank`) value in the output image
     *   …repeat until no more pixels left.
 </details>
+
+```elixir
+Nx.global_default_backend(EXLA.Backend)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+{Nx.BinaryBackend, []}
+```
 
 ## Helper functions
 
