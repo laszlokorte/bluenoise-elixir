@@ -4,11 +4,11 @@
 
 ```elixir
 Mix.install([
-  {:nx, "~> 0.11.0"},
+  {:nx, "~> 0.12.0"},
   {:kino, "~> 0.19.0"},
   {:image, "~> 0.62.1"},
-  {:kino_zoetrope, "~> 0.20.0"},
-  {:exla, "~> 0.11.0"},
+  {:kino_zoetrope, "~> 0.24.0"},
+  {:exla, "~> 0.12.0"},
   {:fine, "0.1.4"}
 ])
 
@@ -183,7 +183,9 @@ gauss_kernel =
 
 # Generate some initial uniform noise
 {initial_white_noise, _new_key} =
-  random_seed |> Nx.Random.uniform(shape: {size, size}, type: :f32)
+  random_seed
+  |> Nx.Random.uniform(shape: {size, size}, type: :f32)
+  |> Nx.backend_transfer()
 
 Kino.nothing()
 ```
@@ -207,7 +209,11 @@ initial_white_noise
 initial_placement = initial_white_noise |> Nx.greater(1 - initial_ratio) |> Nx.flatten()
 
 # initial white pixel
-placed_pixels = initial_placement |> Nx.flatten()
+placed_pixels =
+  initial_placement
+  |> Nx.flatten()
+  |> Nx.backend_transfer()
+
 # number of initially white pixels pixels
 count_placed = Nx.sum(placed_pixels) |> Nx.to_number()
 # number of initially black pixels
@@ -415,7 +421,8 @@ debug_blurred
 # We call the value that we assign to a pixels its `rank`
 
 # Starting with a new empty image for storing the rank
-empty_ranks = Nx.broadcast(0, Nx.shape(initial_white_noise)) |> Nx.flatten()
+empty_ranks =
+  Nx.broadcast(0, Nx.shape(initial_white_noise)) |> Nx.flatten() |> Nx.backend_transfer()
 
 # We iteratively remove one pixel after another, each time from the densest location
 # and assign an incrementing label (rank) to its location in the empty image
@@ -574,6 +581,7 @@ Kino.nothing()
   end)
   |> Enum.reverse()
   |> Nx.concatenate()
+  |> Nx.backend_transfer()
   |> Nx.reshape({:auto, size, size, 1}),
   debug_trace
   |> Enum.map(fn {_voidest, blurred, _ranks, _placed} ->
@@ -598,6 +606,7 @@ Kino.nothing()
   end)
   |> Enum.reverse()
   |> Nx.concatenate()
+  |> Nx.backend_transfer()
   |> Nx.reshape({:auto, size, size, 1})
 ]
 |> KinoZoetrope.TensorStack.new(
@@ -889,6 +898,7 @@ gauss_kernel
 girl =
   bin
   |> Nx.from_binary(:u8)
+  |> Nx.backend_transfer()
   |> Nx.reshape({64, 64, 4})
   # Discard alpha Channel
   |> Nx.slice_along_axis(0, 3, axis: 2)
@@ -911,7 +921,12 @@ girl
 # gaussian kernel as probablity density and calculate
 # the cumulative distribution via 1D prefix sum (Nx.cumulative_sum)
 {gw, gh} = Nx.shape(gauss_kernel)
-cumulative_gaus = gauss_kernel |> Nx.flatten() |> Nx.cumulative_sum()
+
+cumulative_gaus =
+  gauss_kernel
+  |> Nx.flatten()
+  |> Nx.cumulative_sum()
+  |> Nx.backend_transfer()
 
 # The top left most pixel is black and 
 # the bottom right most pixel is white
