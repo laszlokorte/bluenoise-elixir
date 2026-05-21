@@ -9,7 +9,6 @@ Mix.install([
   {:image, "~> 0.62.1"},
   {:kino_zoetrope, "~> 0.24.0"},
   {:exla, "~> 0.12.0"},
-  {:fine, "0.1.4"}
 ])
 
 Kino.nothing()
