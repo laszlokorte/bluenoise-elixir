@@ -52,31 +52,31 @@ Explore the code below…
   The algorithm consists of multiple phases.
 
 1.  **Initilization** (the only non-deterministic step, because of the `Nx.Random.uniform()` call):
-    
+
     *   Generate white noise (`initial_white_noise`)
     *   Threshold the white noise to select a random subset (~10%) of pixels, as binary image (`placed_pixels`)
 
 3.  **Phase1: Spreading**
-    
+
     The randomly `placed_pixels` might be clustered in some areas and sparse in some other areas. This a because a un-correlated(white noise) random generator is used. To spread the pixels more evenly:
-    
+
     *   Blur the `placed_pixels` with a gaussian filter to estimate the density across the image
     *   Move a `placed_pixel` from the highest densesity area to the most void empty position
     *   …repeat until dense and void areas converge
 
 4.  **Phase 2: Assign distinct intensities to pixels**
-    
-    The random subset of `placed_pixels` is now spread as far as possible across the image.  
+
+    The random subset of `placed_pixels` is now spread as far as possible across the image.
     Next we assign each of them a distinct intensity value (starting at 0) by iterating through the set in descending order:
-    
+
     *   Blur the `placed_pixels`
     *   Select the pixel with highest density
     *   Assign a new intensity value to this pixel
     *   Repeat until each pixel in `placed_pixels` has been processed
 5.  **Phase 3: Add remaining pixels**
-    
+
     Up until now only a subset of the pixels (~10%) have been processed. To generate the remaining 90% of pixels:
-    
+
     *   Blur the `placed_pixels`
     *   Select the empty pixel with lowest density
     *   Add this pixel to the `placed_pixels`
@@ -185,7 +185,8 @@ gauss_kernel =
 {initial_white_noise, _new_key} =
   random_seed
   |> Nx.Random.uniform(shape: {size, size}, type: :f32)
-  |> Nx.backend_transfer()
+
+initial_white_noise = initial_white_noise
 
 Kino.nothing()
 ```
@@ -206,13 +207,15 @@ initial_white_noise
 
 ```elixir
 # turn uniform noise into binary (black/white, 1/0) image by thresholding
-initial_placement = initial_white_noise |> Nx.greater(1 - initial_ratio) |> Nx.flatten()
+initial_placement =
+  initial_white_noise
+  |> Nx.greater(1 - initial_ratio)
+  |> Nx.flatten()
 
 # initial white pixel
 placed_pixels =
   initial_placement
   |> Nx.flatten()
-  |> Nx.backend_transfer()
 
 # number of initially white pixels pixels
 count_placed = Nx.sum(placed_pixels) |> Nx.to_number()
@@ -259,11 +262,11 @@ placed_pixels
 
 ```elixir
 # Next step:
-# Iteratively swap the white pixels with black pixels to achive more evenly spaced 
+# Iteratively swap the white pixels with black pixels to achive more evenly spaced
 # distribution of white pixels.
 
 # Starting with the initial random placement white pixels
-# we swap two pixels (one black and one white pixel) per iteration 
+# we swap two pixels (one black and one white pixel) per iteration
 # until we can no longer improve the spacing
 swaps =
   Stream.unfold({{nil, nil}, placed_pixels}, fn {prev_swap, placed} ->
@@ -286,7 +289,7 @@ swaps =
     # check if these two locations have already been swapped just before
     # to avoid cyclic swapping back and forth
     if prev_swap != {densest, voidest} and prev_swap != {voidest, densest} and densest != voidest do
-      # (We use `Nx.indexed_put` for setting indivual pixels and this function expects the index and value 
+      # (We use `Nx.indexed_put` for setting indivual pixels and this function expects the index and value
       # in some weird format)
 
       # prepare the indices for swapping
@@ -374,6 +377,13 @@ Kino.nothing()
 )
 ```
 
+<!-- livebook:{"output":true} -->
+
+```
+
+11:24:29.755 [warning] EXLA has compiled #Function<93.124553489/1 in EXLA.Backend.slice/5> 10 times with the same input shapes. This typically means tensor values are being captured inside a closure passed to defn, jit, or value_and_grad. Each distinct captured value forces a full recompilation. Pass changing tensors as explicit function arguments instead.
+```
+
 ```elixir
 # See how many iterations we took:
 # 36 swaps on my machine when I last tried
@@ -422,7 +432,7 @@ debug_blurred
 
 # Starting with a new empty image for storing the rank
 empty_ranks =
-  Nx.broadcast(0, Nx.shape(initial_white_noise)) |> Nx.flatten() |> Nx.backend_transfer()
+  Nx.broadcast(0, Nx.shape(initial_white_noise)) |> Nx.flatten()
 
 # We iteratively remove one pixel after another, each time from the densest location
 # and assign an incrementing label (rank) to its location in the empty image
@@ -515,10 +525,17 @@ Kino.nothing()
 )
 ```
 
+<!-- livebook:{"output":true} -->
+
+```
+
+11:24:31.725 [warning] EXLA has compiled #Function<93.124553489/1 in EXLA.Backend.slice/5> 10 times with the same input shapes. This typically means tensor values are being captured inside a closure passed to defn, jit, or value_and_grad. Each distinct captured value forces a full recompilation. Pass changing tensors as explicit function arguments instead.
+```
+
 ## Phase 2 Results
 
 ```elixir
-# Look how we now have a well spaced out distributon of unique increasing values 
+# Look how we now have a well spaced out distributon of unique increasing values
 new_ranks
 |> Nx.reshape({size, size, 1})
 |> KinoZoetrope.TensorStack.new(titel: "Previously white pixels labeled with increasing value", size: 300)
@@ -581,7 +598,6 @@ Kino.nothing()
   end)
   |> Enum.reverse()
   |> Nx.concatenate()
-  |> Nx.backend_transfer()
   |> Nx.reshape({:auto, size, size, 1}),
   debug_trace
   |> Enum.map(fn {_voidest, blurred, _ranks, _placed} ->
@@ -606,7 +622,6 @@ Kino.nothing()
   end)
   |> Enum.reverse()
   |> Nx.concatenate()
-  |> Nx.backend_transfer()
   |> Nx.reshape({:auto, size, size, 1})
 ]
 |> KinoZoetrope.TensorStack.new(
@@ -631,6 +646,13 @@ Kino.nothing()
     }
   ]
 )
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+
+11:24:36.295 [warning] EXLA has compiled #Function<93.124553489/1 in EXLA.Backend.slice/5> 10 times with the same input shapes. This typically means tensor values are being captured inside a closure passed to defn, jit, or value_and_grad. Each distinct captured value forces a full recompilation. Pass changing tensors as explicit function arguments instead.
 ```
 
 ## Final Results
@@ -708,7 +730,7 @@ defmodule FFTHelper do
   end
 
   @doc """
-    Takes an image as 2D Nx.Tensor and returns a Kino Plot of the 2D spectrum (DFT) 
+    Takes an image as 2D Nx.Tensor and returns a Kino Plot of the 2D spectrum (DFT)
   """
   def plot_spectrum(image, args \\ []) do
     # we expect the image to be square
@@ -783,8 +805,8 @@ final_ranks
 ```elixir
 # Plot the spectrum of the generated noise.
 # We expect low (dark) values for the low frequencies and high (bright) values in
-# the high frequency bins. 
-# This corresponds to blue light having the majority of its energy in 
+# the high frequency bins.
+# This corresponds to blue light having the majority of its energy in
 # shorter wave lengths (high frequencies) and less energy in long wavelengths (low frequency)
 final_ranks
 |> Nx.reshape({size, size})
@@ -807,7 +829,7 @@ initial_white_noise
 <!-- livebook:{"reevaluate_automatically":true} -->
 
 ```elixir
-# Lets try to threshold our result: setting only pixels to white whose value is above a certrain threshold. 
+# Lets try to threshold our result: setting only pixels to white whose value is above a certrain threshold.
 # Notice how only some of the pixel remain white (32/255) but they are evenly spaced out
 # Try change the threshold to increase the number of white pixels and see how the spacing keeps nice
 threshold = 16
@@ -890,7 +912,7 @@ gauss_kernel
 ```
 
 ```elixir
-# Next we need an example image to work with. 
+# Next we need an example image to work with.
 # We load an rgba png file from disk and convert to grayscale
 {:ok, img} = Image.open(Kino.FS.file_path("girlperl.png"))
 {:ok, bin} = Vix.Vips.Image.write_to_binary(img)
@@ -898,7 +920,6 @@ gauss_kernel
 girl =
   bin
   |> Nx.from_binary(:u8)
-  |> Nx.backend_transfer()
   |> Nx.reshape({64, 64, 4})
   # Discard alpha Channel
   |> Nx.slice_along_axis(0, 3, axis: 2)
@@ -917,7 +938,7 @@ girl
 ```
 
 ```elixir
-# In preparation for later sampling we interpret the 
+# In preparation for later sampling we interpret the
 # gaussian kernel as probablity density and calculate
 # the cumulative distribution via 1D prefix sum (Nx.cumulative_sum)
 {gw, gh} = Nx.shape(gauss_kernel)
@@ -926,9 +947,8 @@ cumulative_gaus =
   gauss_kernel
   |> Nx.flatten()
   |> Nx.cumulative_sum()
-  |> Nx.backend_transfer()
 
-# The top left most pixel is black and 
+# The top left most pixel is black and
 # the bottom right most pixel is white
 cumulative_gaus
 # We can simplify the 2-dim kernel to 1 dimension because
@@ -941,10 +961,10 @@ cumulative_gaus
 ```elixir
 # Retreive dimensions of the gauss kernel...
 {gw, gh} = Nx.shape(gauss_kernel)
-# ... and the input image 
+# ... and the input image
 {h, w, _} = Nx.shape(girl)
 
-# use both our generated blue noise (final_ranks) 
+# use both our generated blue noise (final_ranks)
 # and white noise as comparison
 sspp_result =
   [final_ranks, initial_white_noise]
@@ -1140,14 +1160,14 @@ show_kernels
 ```
 
 ```elixir
-# Try both our generated blue noise and the 
+# Try both our generated blue noise and the
 # initial white noise as noise sources in comparison
 sspp_blurs =
   for noise_source <- [final_ranks, initial_white_noise] do
     for cum_kernel <- cumulative_kernels do
       # Retreive dimensions of the gauss kernel...
       {gw, gh} = Nx.shape(cum_kernel)
-      # ... and the input image 
+      # ... and the input image
       {h, w, _} = Nx.shape(girl)
 
       # convert our generated blue noise (final_ranks) into square shape and into range 0..1
@@ -1237,7 +1257,7 @@ Kino.nothing()
 ```
 
 ```elixir
-# Look at the results 
+# Look at the results
 sspp_blurs
 # Show both the original image, the classic blur and the SSPP blurs
 # for comparison
@@ -1255,4 +1275,11 @@ sspp_blurs
   cmaps: ["hot", "viridis", nil, nil],
   size: 133
 )
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+
+11:25:05.578 [warning] EXLA has compiled #Function<93.124553489/1 in EXLA.Backend.slice/5> 10 times with the same input shapes. This typically means tensor values are being captured inside a closure passed to defn, jit, or value_and_grad. Each distinct captured value forces a full recompilation. Pass changing tensors as explicit function arguments instead.
 ```
