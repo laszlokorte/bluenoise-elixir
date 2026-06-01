@@ -7,7 +7,7 @@ Mix.install([
   {:nx, "~> 0.12.0"},
   {:kino, "~> 0.19.0"},
   {:image, "~> 0.62.1"},
-  {:kino_zoetrope, "~> 0.24.0"},
+  {:kino_zoetrope, "~> 0.25.0"},
   {:exla, "~> 0.12.0"},
 ])
 
@@ -119,7 +119,7 @@ end
 Gauss.kernel(32, 3)
 |> Nx.reshape({33, 33, 1})
 |> then(&Nx.divide(&1, Nx.reduce_max(&1)))
-|> KinoZoetrope.TensorStack.new(titel: "Gaussian Kernel", cmap: "viridis", size: 300)
+|> KinoZoetrope.TensorStack.new(title: "Gaussian Kernel", cmap: "viridis", size: 300)
 ```
 
 ```elixir
@@ -146,7 +146,7 @@ Gauss.kernel(8, 2)
 |> NxHelpers.cyclic_pad(5)
 |> then(&Nx.divide(&1, Nx.reduce_max(&1)))
 |> KinoZoetrope.TensorStack.new(
-  titel: "Gaussian Kernel with Cyclic Padding added",
+  title: "Gaussian Kernel with Cyclic Padding added",
   multiple: false,
   size: 300
 )
@@ -196,7 +196,7 @@ Kino.nothing()
 # caused by some pixel having the same value as their neighbours by pure chance.
 initial_white_noise
 |> Nx.reshape({size, size, 1})
-|> KinoZoetrope.TensorStack.new(titel: "Random White Noise", size: 300)
+|> KinoZoetrope.TensorStack.new(title: "Random White Noise", size: 300)
 
 # Our goal will be to get rid of this randomly occuring clustering
 # while preserving the overall randomness of pixel values
@@ -229,7 +229,7 @@ Kino.nothing()
 # there are some rather empty areas and some more densely populated areas.
 placed_pixels
 |> Nx.reshape({size, size})
-|> KinoZoetrope.TensorStack.new(titel: "Thresholded White noise", multiple: false, size: 300)
+|> KinoZoetrope.TensorStack.new(title: "Thresholded White noise", multiple: false, size: 300)
 ```
 
 ## Estimating Pixel Density via Blur
@@ -249,7 +249,7 @@ placed_pixels
 |> Nx.reshape({size, size})
 |> then(&Nx.divide(&1, Nx.reduce_max(&1)))
 |> KinoZoetrope.TensorStack.new(
-  titel: "Estimated pixel density",
+  title: "Estimated pixel density",
   multiple: false,
   vmax: 1,
   vmin: 0,
@@ -337,7 +337,7 @@ Kino.nothing()
   |> Nx.reshape({:auto, size, size, 1})
 ]
 |> KinoZoetrope.TensorStack.new(
-  titel: "Placed pixels (left) and Density estimation (right) after each swap",
+  title: "Placed pixels (left) and Density estimation (right) after each swap",
   normalize: true,
   vmin: 0,
   vmax: 1,
@@ -403,7 +403,7 @@ Enum.count(swaps)
 not_ranked
 |> Nx.reshape({size, size, 1})
 |> Nx.divide(Nx.reduce_max(not_ranked))
-|> KinoZoetrope.TensorStack.new(titel: "Repositioned white pixels", size: 300)
+|> KinoZoetrope.TensorStack.new(title: "Repositioned white pixels", size: 300)
 ```
 
 ```elixir
@@ -413,7 +413,7 @@ debug_blurred
 |> Nx.reshape({size, size, 1})
 |> Nx.divide(Nx.reduce_max(debug_blurred))
 |> KinoZoetrope.TensorStack.new(
-  titel: "Estimated pixel density after repositioning pixels",
+  title: "Estimated pixel density after repositioning pixels",
   vmax: 1.0,
   vmin: 0.0,
   size: 300
@@ -501,7 +501,7 @@ Kino.nothing()
   |> Nx.reshape({:auto, size, size, 1})
 ]
 |> KinoZoetrope.TensorStack.new(
-  titel: "Unlabeled pixel (left) and Labeled Pixels (right)",
+  title: "Unlabeled pixel (left) and Labeled Pixels (right)",
   labels: ["Unranked Pixels", "Ranks"],
   size: 210,
   markers: [
@@ -537,7 +537,7 @@ Kino.nothing()
 # Look how we now have a well spaced out distributon of unique increasing values
 new_ranks
 |> Nx.reshape({size, size, 1})
-|> KinoZoetrope.TensorStack.new(titel: "Previously white pixels labeled with increasing value", size: 300)
+|> KinoZoetrope.TensorStack.new(title: "Previously white pixels labeled with increasing value", size: 300)
 
 # But there are still many black pixels left.
 # Assigning them a rank as well will be the next step
@@ -624,7 +624,7 @@ Kino.nothing()
   |> Nx.reshape({:auto, size, size, 1})
 ]
 |> KinoZoetrope.TensorStack.new(
-  titel: "Placed Pixels (left), Density estimation (center) and Pixel labels (right)",
+  title: "Placed Pixels (left), Density estimation (center) and Pixel labels (right)",
   labels: ["Already Ranked Pixels", "Density Estimation", "Ranks"],
   size: 195,
   markers: [
@@ -770,7 +770,7 @@ defmodule FFTHelper do
     )
     # Plot spectrum as two images
     |> KinoZoetrope.TensorStack.new(
-      titel: Keyword.get(args, :titel, "Spectrum"),
+      title: Keyword.get(args, :titel, "Spectrum"),
       cmaps: [nil, "hsv"],
       size: 300,
       labels: [
@@ -796,7 +796,7 @@ final_ranks
 # for display purposes we need to scale the pixels into a range 0-255
 |> Nx.divide(Nx.reduce_max(final_ranks))
 |> KinoZoetrope.TensorStack.new(
-  titel: "Final normalized labeling (Blue Noise)",
+  title: "Final normalized labeling (Blue Noise)",
   size: 300
 )
 ```
@@ -811,7 +811,7 @@ final_ranks
 |> Nx.reshape({size, size})
 # Spectrum looks cleaner if there is no 0-frequency, ie. if the mean is zero
 |> FFTHelper.recenter()
-|> FFTHelper.plot_spectrum(titel: "Blue Noise Spectrum", log: true)
+|> FFTHelper.plot_spectrum(title: "Blue Noise Spectrum", log: true)
 ```
 
 ```elixir
@@ -822,7 +822,7 @@ initial_white_noise
 |> then(&Nx.subtract(&1, Nx.mean(&1)))
 |> FFTHelper.recenter()
 |> Nx.reshape({size, size})
-|> FFTHelper.plot_spectrum(titel: "White Noise Spectrum", log: true)
+|> FFTHelper.plot_spectrum(title: "White Noise Spectrum", log: true)
 ```
 
 <!-- livebook:{"reevaluate_automatically":true} -->
@@ -842,7 +842,7 @@ thresholded_ranks =
 thresholded_ranks
 |> Nx.reshape({size, size, 1})
 |> KinoZoetrope.TensorStack.new(
-  titel: "Thresholded Blue noise yields uniformly spaced white pixels",
+  title: "Thresholded Blue noise yields uniformly spaced white pixels",
   size: 300
 )
 ```
@@ -857,7 +857,7 @@ thresholded_ranks
 thresholded_ranks
 |> FFTHelper.recenter_mean()
 |> Nx.reshape({size, size})
-|> FFTHelper.plot_spectrum(titel: "Spectrum of Thresholded Blue Noise", log: true)
+|> FFTHelper.plot_spectrum(title: "Spectrum of Thresholded Blue Noise", log: true)
 ```
 
 ```elixir
@@ -873,7 +873,7 @@ thresholded_white_noise =
 thresholded_white_noise
 |> Nx.reshape({size, size, 1})
 |> KinoZoetrope.TensorStack.new(
-  titel: "Thresholded White Noise yields some dense and sparse spots",
+  title: "Thresholded White Noise yields some dense and sparse spots",
   size: 300
 )
 ```
@@ -884,7 +884,7 @@ thresholded_white_noise
 thresholded_white_noise
 |> FFTHelper.recenter_mean()
 |> Nx.reshape({size, size})
-|> FFTHelper.plot_spectrum(titel: "Spectrum of Thresholded White Noise", log: true)
+|> FFTHelper.plot_spectrum(title: "Spectrum of Thresholded White Noise", log: true)
 ```
 
 ## Example Application
@@ -904,7 +904,7 @@ gauss_kernel = Gauss.kernel(7, 1)
 gauss_kernel
 |> Nx.reshape({7, 7})
 |> KinoZoetrope.TensorStack.new(
-  titel: "Some Gauss kernel for blurring an image",
+  title: "Some Gauss kernel for blurring an image",
   multiple: false,
   size: 200
 )
@@ -929,7 +929,7 @@ girl =
 girl
 |> Nx.reshape({64, 64, 1})
 |> KinoZoetrope.TensorStack.new(
-  titel: "Example Image (The Girl with Perl skills)",
+  title: "Example Image (The Girl with Perl skills)",
   vmin: 0,
   vmax: 255,
   size: 300
@@ -954,7 +954,7 @@ cumulative_gaus
 # we just need to use it for sampling a single coord via a single
 # random value
 |> Nx.reshape({gw, gh, 1})
-|> KinoZoetrope.TensorStack.new(titel: "1D cumulated Gauss kernel", size: 200)
+|> KinoZoetrope.TensorStack.new(title: "1D cumulated Gauss kernel", size: 200)
 ```
 
 ```elixir
@@ -1056,7 +1056,7 @@ sspp_result =
 sspp_result
 |> Enum.map(&elem(&1, 0))
 |> KinoZoetrope.TensorStack.new(
-  titel: "Image Blurred via 1SSP Convolution",
+  title: "Image Blurred via 1SSP Convolution",
   labels: ["with Blue Noise as Random Source", "White Noise as Random Source"],
   vmin: 0,
   vmax: 255,
@@ -1077,7 +1077,7 @@ sspp_result
   |> Nx.reshape({h, w, 1})
 end)
 |> KinoZoetrope.TensorStack.new(
-  titel: "The coordinate values of the displacement map",
+  title: "The coordinate values of the displacement map",
   labels: ["Blue Nosie", "White Noise"],
   vmin: 0,
   vmax: w * h,
@@ -1150,7 +1150,7 @@ Kino.nothing()
 show_kernels
 |> Enum.map(&Enum.at(classic_blurs, &1))
 |> KinoZoetrope.TensorStack.new(
-  titel: "Image Blurred via classic convolution",
+  title: "Image Blurred via classic convolution",
   labels: Enum.map(show_kernels, &"σ=#{Enum.at(kernel_widths, &1)}"),
   vmin: 0,
   vmax: 255,
@@ -1262,7 +1262,7 @@ sspp_blurs
 # for comparison
 |> then(&[girl, Nx.stack([girl | classic_blurs]) | &1])
 |> KinoZoetrope.TensorStack.new(
-  titel: "Image Blurred via 1SSP Convolution with differently sized Gaussian kernels",
+  title: "Image Blurred via 1SSP Convolution with differently sized Gaussian kernels",
   labels: [
     "Original",
     "Classic Convolution Blur",
